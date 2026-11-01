@@ -864,6 +864,11 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="tools_gemma4_only_notice">Tools only work with Gemma 4 models. They are disabled for other models.</string>
     <string name="tools_beta_notice">Alarm/timer tools (alarm set/cancel/list, timer start/stop/list) are beta. Unexpected behavior may occur.</string>
     <string name="tools_settings_card_title">Tool settings</string>
+    <string name="tools_max_rounds_title">Tool round limit</string>
+    <string name="tools_max_rounds_desc">Resets every send (chat turn). When the limit is reached, that reply stops and you can continue.</string>
+    <string name="tools_max_rounds_label">Max rounds</string>
+    <string name="tool_round_limit_notice">Tool call limit reached for this reply (%1$d rounds)</string>
+    <string name="tool_round_limit_continue">Continue</string>
     <string name="tools_alarm_management">Alarm management</string>
     <string name="tools_no_alarms">No alarms are registered</string>
     <string name="tools_alarm_enable_requirement">Only available when “Alarm set” is enabled</string>

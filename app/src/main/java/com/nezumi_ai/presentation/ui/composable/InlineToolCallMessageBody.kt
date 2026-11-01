@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.TextStyle
@@ -81,71 +82,75 @@ fun InlineToolCallMessageBody(
     // 吹き出し背景は BubbleContainer 側で1回だけ描画し、
     // テキストセグメント・カードは同じ吹き出しの内側で縦に並べる。
     BubbleContainer(modifier = modifier) {
-        for (seg in segments) {
+        // 同じ内容の tool_call が連続しても Compose が1枚に潰さないよう index で分ける。
+        // 注意: 本文の hash を key に入れるとストリーム更新のたびに Text が破棄→再生成され
+        // 「テキストが一瞬消えて戻る」ガクつきになるので、位置だけを identity にする。
+        segments.forEachIndexed { listIndex, seg ->
             when (seg) {
                 is GgufToolCallParser.Segment.TextSegment -> {
                     val t = seg.text.trim('\n', ' ', '\t')
                     if (t.isNotEmpty()) {
-                        BubbleText(text = t)
+                        key("text-$listIndex") {
+                            BubbleText(text = t)
+                        }
                     }
                 }
                 is GgufToolCallParser.Segment.ToolCallSegment -> {
-                    // 通常は実行結果カードを優先する。まだ結果が届いていない場合でも、
-                    // ツール呼び出し自体が COMPLETE になった瞬間には arguments が確定している。
-                    // convert_md_to_document は保存ボタンの入力が呼び出し arguments だけで揃うため、
-                    // ここで暫定 ToolResultCard を作り、保存ボタンをツール結果待ちにしない。
-                    //
-                    // Bug fix: 暫定カードの toolName に `seg.toolCall.name` (モデルが吐いた
-                    // 生の名前) をそのまま入れると、モデルが camelCase (convertMdToDocument)
-                    // や snake_case (convert_md_to_document) のどちらで返してくるかによって
-                    // InlineToolCallCard 側の保存ボタン判定が素通りし、
-                    // 「呼び出し完了直後は保存ボタンが出ない」バグになる。
-                    // ToolResultCard の toolName の契約は「正規化済みツール名」なので、
-                    // 実行結果カード (ChatViewModel 側で正規化済み) と揃うよう、
-                    // ここでも `_` を除いて小文字化した名前を入れる。
-                    val actualCard = toolResults.getOrNull(seg.index)
-                        ?: inlineToolResponseCards.getOrNull(seg.index)
-                    val completedCallCard = if (
-                        actualCard == null &&
-                        seg.status == GgufToolCallParser.Segment.CompletionStatus.COMPLETE &&
-                        seg.toolCall != null
-                    ) {
-                        ToolResultCard(
-                            toolName = normalizeToolNameForCard(seg.toolCall.name),
-                            success = true,
-                            payload = seg.toolCall.arguments.mapValues { (_, value) ->
-                                value.toJsonElement()
+                    key("tool-${seg.index}-$listIndex") {
+                        // 実行結果カードを優先する。結果がまだ無いときは Running のままにする。
+                        // 以前は COMPLETE の呼び出し引数を payload にした Success 暫定カードを作っており、
+                        // 結果欄にリクエストと同じ JSON が出ていた。
+                        // convert_md_to_document だけは保存ボタン用に必要項目だけ暫定カードを出す。
+                        val actualCard = toolResults.getOrNull(seg.index)
+                            ?: inlineToolResponseCards.getOrNull(seg.index)
+                        val documentDraftCard = if (
+                            actualCard == null &&
+                            seg.status == GgufToolCallParser.Segment.CompletionStatus.COMPLETE &&
+                            seg.toolCall != null &&
+                            isConvertMdToDocumentTool(seg.toolCall.name)
+                        ) {
+                            val args = seg.toolCall.arguments
+                            val draftPayload = buildMap<String, JsonElement> {
+                                args["markdown"]?.let { put("markdown", it.toJsonElement()) }
+                                args["filename"]?.let { put("filename", it.toJsonElement()) }
+                                args["format"]?.let { put("format", it.toJsonElement()) }
                             }
-                        )
-                    } else {
-                        null
-                    }
-                    val card = actualCard ?: completedCallCard
+                            if (draftPayload.isNotEmpty()) {
+                                ToolResultCard(
+                                    toolName = normalizeToolNameForCard(seg.toolCall.name),
+                                    success = true,
+                                    payload = draftPayload
+                                )
+                            } else {
+                                null
+                            }
+                        } else {
+                            null
+                        }
 
-                    // 完了の判定基準:
-                    //   - 実行結果カードが届いていれば、その結果をそのまま表示する。
-                    //   - 結果カードがまだ無くても、tool_call の閉じタグまで到達していて
-                    //     ToolCall が確定していれば、UI 上は呼び出し完了として暫定カードを使う。
-                    //     これにより convert_md_to_document の「保存」ボタンを、ツール実行結果を
-                    //     待たずに呼び出し完了直後から表示できる。
-                    //   - 未完タグは Running、トークン切れは Error のまま。
-                    val status = when {
-                        actualCard != null && actualCard.success -> InlineToolCallStatus.Success(actualCard)
-                        actualCard != null && !actualCard.success -> InlineToolCallStatus.Error(actualCard)
-                        completedCallCard != null -> InlineToolCallStatus.Success(completedCallCard)
-                        seg.status == GgufToolCallParser.Segment.CompletionStatus.TRUNCATED ->
-                            InlineToolCallStatus.Error(
-                                card = GgufToolCallParser.buildTruncatedFailureCard(seg.toolCall?.name),
-                                message = "ツール呼び出しが途中で切れました（トークン上限）。実行されていません。"
-                            )
-                        else -> InlineToolCallStatus.Running
+                        // 完了の判定基準:
+                        //   - 実行結果カードが届いていれば、その結果をそのまま表示する。
+                        //   - convert_md_to_document の保存用ドラフトだけ暫定 Success を許可する。
+                        //   - それ以外で結果が無い COMPLETE は Running（引数を結果に見せない）。
+                        //   - 未完タグは Running、トークン切れは Error のまま。
+                        val status = when {
+                            actualCard != null && actualCard.success -> InlineToolCallStatus.Success(actualCard)
+                            actualCard != null && !actualCard.success -> InlineToolCallStatus.Error(actualCard)
+                            documentDraftCard != null -> InlineToolCallStatus.Success(documentDraftCard)
+                            seg.status == GgufToolCallParser.Segment.CompletionStatus.TRUNCATED ->
+                                InlineToolCallStatus.Error(
+                                    card = GgufToolCallParser.buildTruncatedFailureCard(seg.toolCall?.name),
+                                    message = "ツール呼び出しが途中で切れました（トークン上限）。実行されていません。"
+                                )
+                            else -> InlineToolCallStatus.Running
+                        }
+                        InlineToolCallCard(
+                            toolCall = seg.toolCall,
+                            rawJson = seg.rawJson,
+                            status = status,
+                            onSaveDocument = onSaveDocument
+                        )
                     }
-                    InlineToolCallCard(
-                        toolCall = seg.toolCall,
-                        rawJson = seg.rawJson,
-                        status = status,
-                        onSaveDocument = onSaveDocument
-                    )
                 }
             }
         }
@@ -161,6 +166,9 @@ fun InlineToolCallMessageBody(
  */
 private fun normalizeToolNameForCard(name: String): String =
     name.replace("_", "").lowercase()
+
+private fun isConvertMdToDocumentTool(name: String): Boolean =
+    normalizeToolNameForCard(name) == "convertmdtodocument"
 
 private fun Any?.toJsonElement(): JsonElement {
     return when (this) {

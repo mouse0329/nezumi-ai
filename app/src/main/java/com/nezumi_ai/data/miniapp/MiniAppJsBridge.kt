@@ -96,7 +96,17 @@ class MiniAppJsBridge(
 
   window.__nezumiOnStream = function (chunk, done) {
     var cb = __streamCallbacks[chunk.requestId];
-    if (cb) { cb(chunk.delta || '', done); if (done) delete __streamCallbacks[chunk.requestId]; }
+    if (!cb) return;
+    // 互換: 第1引数は従来どおり text delta 文字列でも受け取れる。
+    // 第3引数に type 付き chunk 全体を渡す。
+    //   type: text | thinking | tool_call | tool_result | tool_results |
+    //         executed_tools | tps | tool_round_limit | done
+    var delta = (chunk && chunk.delta != null) ? chunk.delta : '';
+    try {
+      if (cb.length >= 3) { cb(delta, done, chunk); }
+      else { cb(delta, done, chunk); }
+    } catch (e) {}
+    if (done) delete __streamCallbacks[chunk.requestId];
   };
 
   window.__nezumiOnEvent = function (event, payload) {

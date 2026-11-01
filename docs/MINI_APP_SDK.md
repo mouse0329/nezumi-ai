@@ -176,16 +176,71 @@ console.log(res.text);
 
 ### 4.2 ストリーミング
 
+コールバックは `(delta, done, chunk)` です。`chunk.type` で本文 / 思考 / ツールを区別します。
+**完了時に全文を delta で差し替えません**（終了は `done === true` と `type: "done"` のみ）。
+
 ```js
+let answer = "";
+let thinking = "";
+
 const res = await nezumi.ai.stream(
   { model: modelId, prompt: "自己紹介して" },
-  (delta, done) => {
-    if (!done) process.stdout.write(delta);
+  (delta, done, chunk) => {
+    switch (chunk.type) {
+      case "text":
+        answer += delta;           // 本文トークン
+        break;
+      case "thinking":
+        thinking += delta;         // 思考トークン
+        break;
+      case "tool_call":
+        console.log("tools:", chunk.names); // string[]
+        break;
+      case "tool_result":
+        console.log(chunk.name, chunk.status); // e.g. "web_fetch", "success"
+        break;
+      case "tool_results":
+        // 結果カード JSON 配列（文字列）
+        console.log(chunk.resultsJson);
+        break;
+      case "executed_tools":
+        console.log(chunk.names);
+        break;
+      case "tps":
+        console.log("tps", chunk.tps);
+        break;
+      case "tool_round_limit":
+        console.log("tool round limit", chunk.maxRounds);
+        break;
+      case "done":
+        // ストリーム終了（delta は空。全文の再送はない）
+        break;
+    }
+    if (done) {
+      console.log("final answer:", answer);
+    }
   }
 );
+
 // res.requestId でキャンセル可能
 await nezumi.ai.stop(res.requestId);
 ```
+
+#### ストリーム chunk の `type`
+
+| type | 主なフィールド | 説明 |
+|---|---|---|
+| `text` | `delta` | 本文の増分 |
+| `thinking` | `delta` | 思考の増分 |
+| `tool_call` | `names: string[]` | モデルが要求したツール名 |
+| `tool_result` | `name`, `status` | 単一ツールの成否 |
+| `tool_results` | `resultsJson` | 結果カードの JSON 配列文字列 |
+| `executed_tools` | `names: string[]` | 実行済みツール名 |
+| `tps` | `tps: number` | トークン/秒 |
+| `tool_round_limit` | `maxRounds: number` | ツール周回上限到達 |
+| `done` | （なし） | 終了合図。`done` 引数も `true` |
+
+互換のため第 1 引数 `delta` は従来どおり文字列です（`text` / `thinking` 以外は多くの場合空文字）。種別判定には第 3 引数 `chunk.type` を使ってください。
 
 ### 4.3 推論パラメータ（GenerateOptions）
 

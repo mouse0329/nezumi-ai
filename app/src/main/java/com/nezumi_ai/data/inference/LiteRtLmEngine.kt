@@ -1445,7 +1445,14 @@ class LiteRtLmEngine(
                     var tokenCount = 0f
                     var firstRequest = true
                     var pendingToolResponseMessage: Message? = null
-                    val maxToolRounds = if (normalized.enableToolCalling) 5 else 1
+                    val maxToolRounds = if (normalized.enableToolCalling) {
+                        normalized.maxToolRounds.coerceIn(
+                            InferenceConfig.MIN_MAX_TOOL_ROUNDS,
+                            InferenceConfig.MAX_MAX_TOOL_ROUNDS
+                        )
+                    } else {
+                        1
+                    }
                     var toolRound = 0
                     while (isActive && toolRound < maxToolRounds) {
                         toolRound++
@@ -1460,7 +1467,7 @@ class LiteRtLmEngine(
                         //   ラウンド単位の累積 roundAccum を使い、ラウンド内の差分だけを
                         //   answerAccum / trySend に流すことで修正する。
                         var roundAccum = ""
-                        var emittedInlineToolCallTags = false
+                        var emittedInlineToolCallCount = 0
                         val messageFlow = if (firstRequest) {
                             firstRequest = false
                             conv.sendMessageAsync(Contents.of(contents))
@@ -1485,11 +1492,13 @@ class LiteRtLmEngine(
                                 //   <tool_call> タグが含まれない。UI 側 (GgufToolCallParser.parseSegments) が本文中の
                                 //   出現位置でカードを差し込めるよう、タグを answerAccum に合成挿入して
                                 //   同じ内容を trySend もする (ストリーミング UI でもタグを見えるように)。
-                                //   同一ラウンドで toolCalls が毎メッセージ再送されてもタグは一度だけ出す。
-                                if (!emittedInlineToolCallTags) {
-                                    emittedInlineToolCallTags = true
+                                //   同一ラウンドで toolCalls が毎メッセージ再送される。件数は増えることがあるので
+                                //   既に出した分を超えた呼び出しだけ追加でタグ化する（同一内容でも index が別）。
+                                if (calls.size > emittedInlineToolCallCount) {
+                                    val newCalls = calls.subList(emittedInlineToolCallCount, calls.size)
+                                    emittedInlineToolCallCount = calls.size
                                     val tagPayload = buildString {
-                                        for (call in calls) {
+                                        for (call in newCalls) {
                                             append("\n<tool_call>\n")
                                             append(buildToolCallJson(call))
                                             append("\n</tool_call>\n")
@@ -1499,7 +1508,7 @@ class LiteRtLmEngine(
                                     emitChunkBlocking(tagPayload)
                                     emitChunkBlocking(
                                         InferenceStreamProtocol.encodeToolCallChunk(
-                                            calls.map { it.name }
+                                            newCalls.map { it.name }
                                         )
                                     )
                                 }
@@ -1580,9 +1589,11 @@ class LiteRtLmEngine(
                         if (toolCallsInTurn.isEmpty()) {
                             break
                         }
-                        if (toolRound >= maxToolRounds) {
-                            Log.w(TAG, "Tool call loop exceeded max rounds, breaking session=$sessionId")
-                            break
+                        val reachedToolCap = toolRound >= maxToolRounds
+                        if (reachedToolCap) {
+                            // 以前はここで break しており、最終ラウンドのツールが実行されず
+                            // 本文も空のまま応答が止まっていた。ツールは実行し、後段で打ち切る。
+                            Log.w(TAG, "Tool call loop hit max rounds; executing this round then stopping session=$sessionId")
                         }
                         // ツール呼び出し時は計測をリセット
                         inferenceStartMs = System.currentTimeMillis()
@@ -1719,6 +1730,18 @@ class LiteRtLmEngine(
                                     )
                                 )
                             }
+                        }
+
+                        if (reachedToolCap) {
+                            // 上限到達後は次ラウンドに進まない。最終文が無いときは結果サマリーを足す。
+                            val fallback = buildToolResultFallback(toolResultCards)
+                            if (fallback.isNotEmpty()) {
+                                answerAccum.append(fallback)
+                                emitChunkBlocking(fallback)
+                            }
+                            emitChunkBlocking(InferenceStreamProtocol.encodeToolRoundLimit(maxToolRounds))
+                            answerAccum.append(InferenceStreamProtocol.contentMarkerForToolRoundLimit(maxToolRounds))
+                            break
                         }
                     }
 
@@ -1982,6 +2005,17 @@ class LiteRtLmEngine(
             is List<*> -> JsonArray(value.map { anyToJsonElement(it) })
             else -> JsonPrimitive(value.toString())
         }
+    }
+
+    private fun buildToolResultFallback(cards: List<ToolResultCard>): String {
+        if (cards.isEmpty()) return ""
+        val details = cards.joinToString("\n") { card ->
+            val payload = card.payload.entries.joinToString(", ") { (key, value) ->
+                "$key=$value"
+            }
+            "- ${card.toolName}: ${if (card.success) "success" else "error"}${if (payload.isNotEmpty()) " ($payload)" else ""}"
+        }
+        return "ツール実行結果:\n$details"
     }
 
     /**

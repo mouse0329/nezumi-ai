@@ -10,7 +10,6 @@ import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ParsedToolCall
-import com.nezumi_ai.data.inference.ToolPayloadSanitizer
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
@@ -129,7 +128,11 @@ abstract class AbstractCloudInferenceEngine(
         }
 
         val toolCallingEnabled = config.enableToolCalling && toolExecutor != null
-        val maxToolRounds = if (toolCallingEnabled) 5 else 1
+        val maxToolRounds = if (toolCallingEnabled) {
+            config.maxToolRounds.coerceIn(1, 20)
+        } else {
+            1
+        }
         val fullAnswer = StringBuilder()
         val toolResultCards = mutableListOf<CloudToolResultCard>()
         var closed = false
@@ -172,9 +175,10 @@ abstract class AbstractCloudInferenceEngine(
                     CloudLog.d(TAG, "No tool calls in round=$toolRound session=$sessionId rawLen=${roundText.length} rawPreview=\"${roundText.toString().take(500)}\"")
                     break
                 }
-                if (toolRound >= maxToolRounds) {
-                    CloudLog.w(TAG, "Tool call loop hit max rounds session=$sessionId")
-                    break
+                val reachedToolCap = toolRound >= maxToolRounds
+                if (reachedToolCap) {
+                    // 以前はここで break しており最終ラウンドのツールが実行されなかった。
+                    CloudLog.w(TAG, "Tool call loop hit max rounds; executing this round then stopping session=$sessionId")
                 }
                 CloudLog.d(TAG, "Tool calls detected round=$toolRound count=${parsed.toolCalls.size} names=${parsed.toolCalls.map { it.name }}")
                 trySend(InferenceStreamProtocol.encodeToolCallChunk(parsed.toolCalls.map { it.name }))
@@ -187,13 +191,15 @@ abstract class AbstractCloudInferenceEngine(
                     toolResultCards.add(CloudToolResultCard(toolCall.name.lowercase(), result.success, anyToJsonElementMap(result.payload)))
                 }
 
-                // toolResponseBlock は conversation (次ラウンド) と fullAnswer (履歴再構築 /
-                // encodeFinal) にだけ載せる。trySend するとマーカー無し本文として
-                // answerBuilder にマージされ、吹き出しに生タグ/JSON が漏れる。
-                // ストリーミング中のカード表示は encodeToolResults に一本化する。
+                // toolResponseBlock は conversation / fullAnswer に載せる。
+                // UI は本文中の <tool_response> と toolResultsJson の両方からカードを埋める。
+                // 以前は trySend せず encodeToolResults のみだったため、DiffUtil が
+                // toolResultsJson を見ない環境ではカードが Running のまま残った。
+                // <tool_response> は parseSegments 側で本文表示から除去されるので trySend してよい。
                 val toolResponseBlock = CloudToolCallParser.formatToolResults(toolResults)
                 if (toolResponseBlock.isNotEmpty()) {
                     fullAnswer.append(toolResponseBlock)
+                    trySend(toolResponseBlock)
                 }
                 if (toolResultCards.isNotEmpty()) {
                     trySend(InferenceStreamProtocol.encodeToolResults(CloudToolResultCard.listToJsonArray(toolResultCards)))
@@ -203,17 +209,21 @@ abstract class AbstractCloudInferenceEngine(
                 // Phase 5: 次ラウンドへの継続はメッセージ追加で表現する。
                 // assistant 側の応答 (思考除去済み) とツール結果を role 付きで積む。
                 // stripThinkingForModelPrompt はシンキングブロックの除去のみで、
-                // tool_call タグはモデル文脈として意図的に残す設計。万一 tool_result 系の
-                // 混入タグがあっても再解釈されないよう、入口で無害化しておく (冪等)。
-                val assistantRound = ToolPayloadSanitizer.sanitizeToolTags(
+                // tool_call タグはモデル文脈として意図的に残す。
+                // sanitizeToolTags は tool_call まで全角化して次ラウンドで再解釈できなくなるため使わない。
+                val assistantRound =
                     Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText.toString())
-                )
                 if (assistantRound.isNotBlank()) {
                     conversation += CloudChatMessage(CloudChatMessage.Role.ASSISTANT, assistantRound)
                 }
                 // toolResponseBlock は formatToolResults 内で既に無害化済み。
                 if (toolResponseBlock.isNotBlank()) {
                     conversation += CloudChatMessage(CloudChatMessage.Role.TOOL_RESULT, toolResponseBlock)
+                }
+                if (reachedToolCap) {
+                    trySend(InferenceStreamProtocol.encodeToolRoundLimit(maxToolRounds))
+                    fullAnswer.append(InferenceStreamProtocol.contentMarkerForToolRoundLimit(maxToolRounds))
+                    break
                 }
             }
 

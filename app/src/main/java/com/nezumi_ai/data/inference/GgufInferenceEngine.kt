@@ -897,7 +897,14 @@ class GgufInferenceEngine(
             val fullAnswer = StringBuilder()
             var currentPrompt = prompt
             val toolCallingEnabled = normalized.enableToolCalling
-            val maxToolRounds = if (toolCallingEnabled) 5 else 1
+            val maxToolRounds = if (toolCallingEnabled) {
+                normalized.maxToolRounds.coerceIn(
+                    InferenceConfig.MIN_MAX_TOOL_ROUNDS,
+                    InferenceConfig.MAX_MAX_TOOL_ROUNDS
+                )
+            } else {
+                1
+            }
             var toolRound = 0
             var isFirstGenerationRound = true
             // 初回ラウンドのストリーミング用バッファ (下記 emitChunk 参照)。
@@ -1004,26 +1011,17 @@ class GgufInferenceEngine(
                     }
                 }
 
-                // バグ修正 (モデルによる <tool_response> の代行生成):
-                //   ツール結果はアプリ側が既に本物を送っている。2ラウンド目以降にモデルが
-                //   自分で <tool_response> を生成した場合、それは重複かつ内容が空/捏造になる
-                //   (Qwen3.5 で <tool_response> のみを生成し続けるログと一致)。
-                //   モデル生成分の <tool_response> ブロックを除去し、ツール呼び出しのない
-                //   通常ラウンドとして処理し直す。
-                if (toolRound > 1 && !parsed.hadTruncatedToolCall &&
+                // モデルが自分で書いた <tool_response> はリクエストのコピーや空になりやすい。
+                // 実行結果は後段の formatToolResults で必ず足すので、ここでは応答タグだけ落とす。
+                // <tool_call> までまとめて消すと、同じラウンドの次のツールが実行されない。
+                if (!parsed.hadTruncatedToolCall &&
                     (ToolCallTags.TOOL_RESPONSE_OPEN in roundOutputText ||
                         Regex("(?s)<\\|tool_response>").containsMatchIn(roundOutputText))
                 ) {
-                    Log.w(TAG, "Stripping model-authored <tool_call>/<tool_response> echo (round=$toolRound session=$sessionId)")
-                    roundOutputText = roundOutputText
-                        .replace(Regex("(?s)<tool_call>.*?</tool_call>"), "")
-                        .replace(Regex("(?s)<tool_response>.*?</tool_response>"), "")
-                        .replace(Regex("(?s)<\\|tool_response>.*?<tool_response\\|>"), "")
-                        .replace(Regex("(?s)<tool_response>.*$"), "")
-                        .replace(Regex("(?s)<\\|tool_response>.*$"), "")
-                        .trim()
+                    Log.w(TAG, "Stripping model-authored <tool_response> (round=$toolRound session=$sessionId)")
+                    roundOutputText = GgufToolCallParser.stripToolResponseBlocks(roundOutputText).trim()
                     parsed = GgufToolCallParser.parse(roundOutputText, isGemma4 = isGemma4)
-                    if (roundOutputText.isBlank()) {
+                    if (toolRound > 1 && roundOutputText.isBlank()) {
                         emptyModelEchoDetected = true
                     }
                 }
@@ -1098,9 +1096,9 @@ class GgufInferenceEngine(
                 if (cancelFlag.get()) {
                     break
                 }
-                if (toolRound >= maxToolRounds) {
-                    Log.w(TAG, "Tool call loop exceeded max rounds, breaking session=$sessionId")
-                    break
+                val reachedToolCap = toolRound >= maxToolRounds
+                if (reachedToolCap) {
+                    Log.w(TAG, "Tool call loop hit max rounds; executing this round then forcing a final answer session=$sessionId")
                 }
 
                 if (parsed.toolCalls.isNotEmpty()) {
@@ -1166,12 +1164,9 @@ class GgufInferenceEngine(
                 //   タグごと保存され・UI の InlineToolCallCard は依然として展開時に `card.payload` を見て
                 //   result を描画できるので見た目は変わらない。
                 val toolResponseBlock = buildString {
-                    // すでに roundText / roundOutputText に <tool_response> が含まれている場合は
-                    // 二重化を避けるため追加しない (ログで確認された重複バグへの対応)。
-                    val alreadyHasResponse = ToolCallTags.TOOL_RESPONSE_OPEN in roundOutputText
-                    if (!alreadyHasResponse) {
-                        append(GgufToolCallParser.formatToolResults(toolResults, isGemma4 = isGemma4))
-                    }
+                    // モデル側の <tool_response> は上で除去済み。実行結果は常に足す。
+                    // ここをスキップすると、履歴に残るのはリクエストの写しだけになる。
+                    append(GgufToolCallParser.formatToolResults(toolResults, isGemma4 = isGemma4))
                     append(truncatedResponseBlock)
                 }
                 if (toolResponseBlock.isNotEmpty()) {
@@ -1207,6 +1202,46 @@ class GgufInferenceEngine(
                     ctx.clearKvCache()
                 }
                 lastSessionId = null
+
+                // 上限到達時はツールをこれ以上回さず、結果を踏まえた最終文を1回だけ生成する。
+                // 以前は break のみで本文が空のまま応答が止まっていた。
+                if (reachedToolCap) {
+                    if (cancelFlag.get() || !isActive) break
+                    val finalRoundText = generateRound(
+                        ctx = ctx,
+                        sessionId = sessionId,
+                        prompt = currentPrompt,
+                        config = normalized,
+                        isFirstRound = false,
+                        emitChunk = { _ -> },
+                        emitControl = { control ->
+                            if (control.isNotEmpty()) trySendBlocking(control)
+                        },
+                        images = images,
+                        audioClips = audioClips
+                    )
+                    var finalText = GgufToolCallParser.stripToolResponseBlocks(finalRoundText).trim()
+                    finalText = finalText
+                        .replace(Regex("(?s)<tool_call>.*?</tool_call>"), "")
+                        .replace(Regex("(?s)<\\|tool_call>.*?<tool_call\\|>"), "")
+                        .replace(Regex("(?s)<tool_call>.*$"), "")
+                        .replace(Regex("(?s)<\\|tool_call>.*$"), "")
+                        .trim()
+                    val toAppend = if (finalText.isNotBlank()) {
+                        finalText
+                    } else if (toolResultCards.isNotEmpty()) {
+                        buildToolResultFallback(toolResultCards)
+                    } else {
+                        ""
+                    }
+                    if (toAppend.isNotEmpty()) {
+                        fullAnswer.append(toAppend)
+                        trySendBlocking(toAppend)
+                    }
+                    trySendBlocking(InferenceStreamProtocol.encodeToolRoundLimit(maxToolRounds))
+                    fullAnswer.append(InferenceStreamProtocol.contentMarkerForToolRoundLimit(maxToolRounds))
+                    break
+                }
             }
 
             if (toolResultCards.isNotEmpty()) {

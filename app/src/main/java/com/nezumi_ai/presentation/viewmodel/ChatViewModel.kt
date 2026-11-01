@@ -1602,13 +1602,20 @@ class ChatViewModel(
     }
 
     fun switchModel(model: String) {
-        if (_isLoading.value || _isModelLoading.value) {
+        // モデル本体のロード中だけ拒否する。生成中 (_isLoading) は止めてから切り替える。
+        // 以前は _isLoading でも即 return しており、ツール周回や推論が終わらないと
+        // 切り替えも送信も入口で落ち続け、オーバーレイが出ない状態になっていた。
+        if (_isModelLoading.value) {
             viewModelScope.launch {
                 _uiMessage.emit(appContext.getString(R.string.vm_cannot_switch_while_busy))
             }
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
+            if (_isLoading.value) {
+                Log.d(TAG, "switchModel: cancelling in-flight generation before load")
+                stopGenerationInternal()
+            }
             val normalizedModel = normalizeModel(model)
             settingsRepository.updateModel(normalizedModel)
             _selectedModel.value = normalizedModel
@@ -2722,31 +2729,11 @@ class ChatViewModel(
                                         finalFromModel != null -> {
                                             finalReceived = true
                                             Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
-                                            // タグを sanitize してからバッファへ戻すと、完了後に
-                                            // Thinking / 本文を再分離できなくなる。raw のまま積む。
-                                            val liveSplitExists =
-                                                (thinkingBuilder.isNotBlank() && answerBuilder.isNotBlank()) ||
-                                                    (lastGoodStreamContent.isNotBlank() &&
-                                                        !lastGoodStreamThinking.isNullOrBlank() &&
-                                                        lastGoodStreamContent != lastGoodStreamThinking)
-                                            val finalHasThinkBoundary =
-                                                markupSpec.containsThinkingOpen(finalFromModel) ||
-                                                    markupSpec.containsThinkingClose(finalFromModel)
-                                            val resolvedFinal = when {
-                                                liveSplitExists && !finalHasThinkBoundary ->
-                                                    answerBuilder.toString()
-                                                finalFromModel.isNotBlank() &&
-                                                    (finalHasThinkBoundary ||
-                                                        finalFromModel.length >= answerBuilder.length) ->
-                                                    finalFromModel
-                                                answerBuilder.isNotEmpty() -> answerBuilder.toString()
-                                                else -> finalFromModel
-                                            }
-                                            finalFromModelGlobal = resolvedFinal
-                                            if (resolvedFinal != answerBuilder.toString()) {
-                                                answerBuilder.clear()
-                                                answerBuilder.append(resolvedFinal)
-                                            }
+                                            // 完了時に FINAL 全文でストリーム済み本文を差し替えない。
+                                            // 差し替えるとツールカード周りで「完全版への再置き換え」が起き、
+                                            // テキストが一瞬消えてガクンと跳ねる。FINAL は終了合図だけに使う。
+                                            finalFromModelGlobal =
+                                                answerBuilder.toString().ifBlank { finalFromModel }
                                         }
                                         thinkDelta != null -> {
  // シンキングフェーズ開始を記録 (未開始のときだけ)
@@ -3173,7 +3160,7 @@ class ChatViewModel(
                                             content = contentForUi,
                                             isStreaming = finalFromModelGlobal == null,
                                             thinkingContent = thinkingForUi,
-                                            toolResultsJson = if (finalFromModelGlobal != null) toolResultsJson else null
+                                            toolResultsJson = toolResultsJson
                                         )
                                         lastPersistedContent = contentForUi
                                         lastPersistedThinking = thinkingForUi
@@ -3310,10 +3297,18 @@ class ChatViewModel(
                 thinking = restored.first,
                 content = restored.second,
             )
-            val streamedThinking = deduped.first
+            // 完了時に再パース結果でストリーム表示を丸ごと差し替えない。
+            // 差分がある場合でもストリーム中に見えていた本文を優先し、ガクつきを防ぐ。
+            val streamedThinking = (
+                lastGoodStreamThinking?.takeIf { it.isNotBlank() }
+                    ?: lastStreamThinkingForFinal?.takeIf { it.isNotBlank() }
+                    ?: deduped.first
+                )
                 ?.let { Gemma4ThinkingParser.sanitizeVisibleText(it) }
                 ?.ifBlank { null }
-            val streamedContent = deduped.second
+            val streamedContent = lastGoodStreamContent.takeIf { it.isNotBlank() }
+                ?: lastStreamContentForFinal.takeIf { it.isNotBlank() }
+                ?: deduped.second
             completeResponse = sanitizeAssistantOutputForModel(
                 engineModelName = engineModelName,
                 text = Gemma4ThinkingParser.sanitizeVisibleText(

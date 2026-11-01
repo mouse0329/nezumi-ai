@@ -1,6 +1,9 @@
 package com.nezumi_ai.presentation.ui.adapter
 
 import android.view.ViewGroup
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.LifecycleOwner
@@ -14,6 +17,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
+import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.stripGemmaTokens
@@ -41,7 +45,9 @@ class MessageAdapter(
     // ドキュメント作成ツール (convert_md_to_document) の結果カードに付ける
     // 「保存」ボタンのコールバック。ChatFragment 側で SAF (CreateDocument) と
     // Markdown→docx/pdf/xlsx 変換に繋いである。onComplete は変換+保存の完了時に呼ぶ。
-    private val onSaveGeneratedDocument: (markdown: String, format: String, fileName: String, onComplete: (Boolean) -> Unit) -> Unit = { _, _, _, _ -> }
+    private val onSaveGeneratedDocument: (markdown: String, format: String, fileName: String, onComplete: (Boolean) -> Unit) -> Unit = { _, _, _, _ -> },
+    /** ツール周回上限バナーの「続けて」押下。通常は sendMessage("続けて")。 */
+    private val onContinueAfterToolLimit: () -> Unit = {}
 ) : ListAdapter<MessageEntity, RecyclerView.ViewHolder>(MessageDiffCallback()) {
 
     /**
@@ -72,7 +78,8 @@ class MessageAdapter(
         val contentHash: Int,
         val visibleContent: String,
         val persistedToolCards: List<ToolResultCard>,
-        val speakText: String
+        val speakText: String,
+        val toolRoundLimit: Int? = null
     )
     private val aiBindCache = HashMap<Long, AiBindCache>()
 
@@ -82,7 +89,9 @@ class MessageAdapter(
             return computeAiBindData(message)
         }
         val cached = aiBindCache[message.id]
-        val contentHash = message.content.hashCode()
+        // toolResultsJson のライブ更新もキャッシュキーに含める（content だけだと結果反映が消える）
+        val contentHash = 31 * message.content.hashCode() +
+            (message.toolResultsJson?.hashCode() ?: 0)
         if (cached != null && cached.contentHash == contentHash) {
             return cached
         }
@@ -104,8 +113,10 @@ class MessageAdapter(
     }
 
     private fun computeAiBindData(message: MessageEntity): AiBindCache {
+        val (contentWithoutLimit, toolRoundLimit) =
+            InferenceStreamProtocol.stripToolRoundLimitMarker(message.content)
         val visibleContent = Gemma4ThinkingParser.sanitizeVisibleText(
-            message.content,
+            contentWithoutLimit,
             preserveToolCallTags = true
         )
         val persistedToolCards = if (!message.toolResultsJson.isNullOrBlank()) {
@@ -113,12 +124,14 @@ class MessageAdapter(
         } else {
             emptyList()
         }
-        val speakText = message.content.stripGemmaTokens().trim()
+        val speakText = contentWithoutLimit.stripGemmaTokens().trim()
         return AiBindCache(
-            contentHash = message.content.hashCode(),
+            contentHash = 31 * message.content.hashCode() +
+                (message.toolResultsJson?.hashCode() ?: 0),
             visibleContent = visibleContent,
             persistedToolCards = persistedToolCards,
-            speakText = speakText
+            speakText = speakText,
+            toolRoundLimit = toolRoundLimit
         )
     }
 
@@ -244,11 +257,11 @@ class MessageAdapter(
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        val composeView = (holder as ComposeMessageViewHolder).composeView
+        val h = holder as ComposeMessageViewHolder
         if (getItemViewType(position) == VIEW_TYPE_USER) {
-            bindUserMessage(composeView, getItem(position))
+            bindUserMessage(h, getItem(position))
         } else {
-            bindAiMessage(composeView, position)
+            bindAiMessage(h, position)
         }
     }
 
@@ -256,17 +269,53 @@ class MessageAdapter(
         super.onViewRecycled(holder)
         // ComposeView を破棄して、AudioPlayerCard の MediaPlayer など
         // DisposableEffect で管理しているリソースを確実に解放する。
-        (holder as? ComposeMessageViewHolder)?.composeView?.disposeComposition()
+        (holder as? ComposeMessageViewHolder)?.let { h ->
+            h.compositionKind = CompositionKind.None
+            h.aiModelState.value = null
+            h.composeView.disposeComposition()
+        }
     }
 
-    class ComposeMessageViewHolder(val composeView: ComposeView) :
-        RecyclerView.ViewHolder(composeView)
+    /**
+     * AI 行の Compose 入力。setContent を毎回呼ばず state 更新だけにすることで、
+     * ツールカード出現時に本文が一瞬消えるガクつきを防ぐ。
+     */
+    private data class AiComposeModel(
+        val message: MessageEntity,
+        val isLastAiMessage: Boolean,
+        val isGenerating: Boolean,
+        val isSpeaking: Boolean,
+        val speakEnabled: Boolean,
+        val showTps: Boolean,
+        val showTtft: Boolean,
+        val variantTotal: Int,
+        val variantIndex: Int,
+        val streamingImagePlaceholder: Boolean,
+        val thinkingExpanded: Boolean,
+        val visibleContent: String,
+        val toolResults: List<ToolResultCard>,
+        val toolRoundLimit: Int?,
+        val parentUserMessageId: Long?,
+        val saveEnabled: Boolean
+    )
+
+    // public に晒すと private の AiComposeModel を型引数に持てないため、ViewHolder 自体を private にする。
+    private class ComposeMessageViewHolder(val composeView: ComposeView) :
+        RecyclerView.ViewHolder(composeView) {
+        val aiModelState = mutableStateOf<AiComposeModel?>(null)
+        var compositionKind: CompositionKind = CompositionKind.None
+    }
+
+    private enum class CompositionKind { None, User, Ai }
 
     // ─────────────────────────────────────────────────────────────
     // ユーザーメッセージ行 (旧 UserMessageViewHolder.bind)
     // ─────────────────────────────────────────────────────────────
-    private fun bindUserMessage(composeView: ComposeView, message: MessageEntity) {
-        composeView.setContent {
+    private fun bindUserMessage(holder: ComposeMessageViewHolder, message: MessageEntity) {
+        // ユーザー行は更新頻度が低いので従来どおり setContent でよい。
+        holder.compositionKind = CompositionKind.User
+        holder.aiModelState.value = null
+        holder.composeView.setContent {
             NezumiComposeTheme {
                 UserMessageItem(
                     message = message,
@@ -280,7 +329,8 @@ class MessageAdapter(
     // ─────────────────────────────────────────────────────────────
     // AI メッセージ行 (旧 AiMessageViewHolder.bind)
     // ─────────────────────────────────────────────────────────────
-    private fun bindAiMessage(composeView: ComposeView, position: Int) {
+    private fun bindAiMessage(holder: ComposeMessageViewHolder, position: Int) {
+        val composeView = holder.composeView
         val message = getItem(position)
         val parentId = message.parentUserMessageId
         val info = if (parentId != null) variantInfo[parentId] else null
@@ -320,44 +370,76 @@ class MessageAdapter(
         val saveHandler: ((String, String, String, (Boolean) -> Unit) -> Unit)? =
             if (message.isStreaming) null else onSaveGeneratedDocument
 
-        composeView.setContent {
-            NezumiComposeTheme {
-                AiMessageItem(
-                    message = message,
-                    isLastAiMessage = isLastAiMessage(position),
-                    isGenerating = isGenerating,
-                    isSpeaking = speakingMessageId == message.id,
-                    speakEnabled = canSpeak,
-                    showTps = showTps,
-                    showTtft = showTtft,
-                    variantTotal = info?.first ?: 1,
-                    variantIndex = info?.second ?: 0,
-                    streamingImagePlaceholder = streamingToolName == "generate_image",
-                    thinkingExpanded = thinkingExpandedByMessageId.contains(message.id),
-                    visibleContent = visibleContent,
-                    toolResults = persistedToolCards,
-                    onSaveDocument = saveHandler,
-                    onThinkingToggle = {
-                        if (thinkingExpandedByMessageId.contains(message.id)) {
-                            thinkingExpandedByMessageId.remove(message.id)
-                        } else {
-                            thinkingExpandedByMessageId.add(message.id)
-                        }
-                        // 自己リバインドで展開状態を反映
-                        val idx = currentList.indexOfFirst { it.id == message.id }
-                        if (idx >= 0) notifyItemChanged(idx)
-                    },
-                    onRegenerate = onAiMessageRegenerate,
-                    onVariantSelect = { newIndex ->
-                        if (parentId != null) onAiVariantSelect(parentId, newIndex)
-                    },
-                    onCopy = { msg ->
-                        // Thinking (内部推論) はユーザー向けのコピー内容に含めない。
-                        copyTextToClipboard(ctx, msg.content.stripGemmaTokens())
-                    },
-                    onSpeak = onAiMessageSpeak,
-                    onBodySizeChanged = onAiMessageLayoutChanged
-                )
+        val model = AiComposeModel(
+            message = message,
+            isLastAiMessage = isLastAiMessage(position),
+            isGenerating = isGenerating,
+            isSpeaking = speakingMessageId == message.id,
+            speakEnabled = canSpeak,
+            showTps = showTps,
+            showTtft = showTtft,
+            variantTotal = info?.first ?: 1,
+            variantIndex = info?.second ?: 0,
+            streamingImagePlaceholder = streamingToolName == "generate_image",
+            thinkingExpanded = thinkingExpandedByMessageId.contains(message.id),
+            visibleContent = visibleContent,
+            toolResults = persistedToolCards,
+            toolRoundLimit = bindData.toolRoundLimit,
+            parentUserMessageId = parentId,
+            saveEnabled = !message.isStreaming
+        )
+        holder.aiModelState.value = model
+
+        // 初回 / ユーザー行からのリサイクル時だけ setContent。以降は state 更新で再コンポーズ。
+        if (holder.compositionKind != CompositionKind.Ai) {
+            holder.compositionKind = CompositionKind.Ai
+            composeView.setContent {
+                val m by holder.aiModelState
+                val current = m ?: return@setContent
+                NezumiComposeTheme {
+                    AiMessageItem(
+                        message = current.message,
+                        isLastAiMessage = current.isLastAiMessage,
+                        isGenerating = current.isGenerating,
+                        isSpeaking = current.isSpeaking,
+                        speakEnabled = current.speakEnabled,
+                        showTps = current.showTps,
+                        showTtft = current.showTtft,
+                        variantTotal = current.variantTotal,
+                        variantIndex = current.variantIndex,
+                        streamingImagePlaceholder = current.streamingImagePlaceholder,
+                        thinkingExpanded = current.thinkingExpanded,
+                        visibleContent = current.visibleContent,
+                        toolResults = current.toolResults,
+                        toolRoundLimit = current.toolRoundLimit,
+                        onContinueAfterToolLimit = onContinueAfterToolLimit,
+                        onSaveDocument = if (current.saveEnabled) onSaveGeneratedDocument else null,
+                        onThinkingToggle = {
+                            val id = holder.aiModelState.value?.message?.id ?: return@AiMessageItem
+                            if (thinkingExpandedByMessageId.contains(id)) {
+                                thinkingExpandedByMessageId.remove(id)
+                            } else {
+                                thinkingExpandedByMessageId.add(id)
+                            }
+                            holder.aiModelState.value = holder.aiModelState.value?.copy(
+                                thinkingExpanded = thinkingExpandedByMessageId.contains(id)
+                            )
+                        },
+                        onRegenerate = onAiMessageRegenerate,
+                        onVariantSelect = { newIndex ->
+                            val pid = holder.aiModelState.value?.parentUserMessageId
+                            if (pid != null) onAiVariantSelect(pid, newIndex)
+                        },
+                        onCopy = { msg ->
+                            copyTextToClipboard(
+                                composeView.context,
+                                msg.content.stripGemmaTokens()
+                            )
+                        },
+                        onSpeak = onAiMessageSpeak,
+                        onBodySizeChanged = onAiMessageLayoutChanged
+                    )
+                }
             }
         }
     }
@@ -367,8 +449,9 @@ class MessageAdapter(
             oldItem.id == newItem.id
 
         override fun areContentsTheSame(oldItem: MessageEntity, newItem: MessageEntity): Boolean {
-            // content と thinkingContent の変更のみをチェック（timestamp 変更は無視）
-            // これにより、ストリーミング中の incremental update を正確に検出
+            // content / thinking に加え toolResultsJson も比較する。
+            // ツール結果は content が変わらないまま live update されるため、
+            // ここを見ないと DiffUtil が「同じ」と判定してカードが Running のまま残る。
             return oldItem.content == newItem.content &&
                 oldItem.thinkingContent == newItem.thinkingContent &&
                 oldItem.isStreaming == newItem.isStreaming &&
@@ -377,7 +460,8 @@ class MessageAdapter(
                 oldItem.audioUri == newItem.audioUri &&
                 oldItem.generationTps == newItem.generationTps &&
                 oldItem.generationTimeMs == newItem.generationTimeMs &&
-                oldItem.ttftMs == newItem.ttftMs
+                oldItem.ttftMs == newItem.ttftMs &&
+                oldItem.toolResultsJson == newItem.toolResultsJson
         }
     }
 }

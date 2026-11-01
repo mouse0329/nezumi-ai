@@ -742,6 +742,11 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="tools_gemma4_only_notice">ツール機能は Gemma 4 モデルでのみ動作します。他のモデルでは無効になります。</string>
     <string name="tools_beta_notice">アラーム・タイマー系のツール（アラームセット・解除・リスト、タイマー開始・停止・一覧）はベータ版です。予期しない動作が発生する場合があります。</string>
     <string name="tools_settings_card_title">ツール設定</string>
+    <string name="tools_max_rounds_title">ツール周回の上限</string>
+    <string name="tools_max_rounds_desc">1回の送信（チャットターン）ごとにリセットされます。上限に達するとその応答を止め、続けて送信できます。</string>
+    <string name="tools_max_rounds_label">上限回数</string>
+    <string name="tool_round_limit_notice">この応答でツール呼び出しの上限（%1$d回）に達しました</string>
+    <string name="tool_round_limit_continue">続けて</string>
     <string name="tools_alarm_management">アラーム管理</string>
     <string name="tools_no_alarms">登録されたアラームはありません</string>
     <string name="tools_alarm_enable_requirement">「アラームセット」が有効な場合のみ使用できます</string>

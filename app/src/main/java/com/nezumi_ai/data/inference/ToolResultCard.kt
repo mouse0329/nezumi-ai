@@ -32,12 +32,18 @@ data class ToolResultCard(
     companion object {
         private const val TAG = "ToolResultCard"
 
+        /** クラウド経由の payload でも落ちないよう未知キーを無視する。 */
+        private val jsonCodec = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+        }
+
         /**
          * JSON文字列からToolResultCard をデシリアライズ
          */
         fun fromJsonString(json: String): ToolResultCard? {
             return runCatching {
-                Json.decodeFromString<ToolResultCard>(json)
+                jsonCodec.decodeFromString<ToolResultCard>(json)
             }.onFailure { e ->
                 Log.w(TAG, "Failed to deserialize ToolResultCard from JSON: ${e.message}")
             }.getOrNull()
@@ -48,7 +54,7 @@ data class ToolResultCard(
          */
         fun listFromJsonArray(jsonArray: String): List<ToolResultCard> {
             return runCatching {
-                Json.decodeFromString<List<ToolResultCard>>(jsonArray)
+                jsonCodec.decodeFromString<List<ToolResultCard>>(jsonArray)
             }.onFailure { e ->
                 Log.w(TAG, "Failed to deserialize ToolResultCard list from JSON: ${e.message}")
             }.getOrDefault(emptyList())

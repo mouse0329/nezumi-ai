@@ -218,9 +218,69 @@ internal fun ToolsSettingsCard(settingsSearchJumpState: SettingsSearchJumpState)
     var webFetchJsRenderEnabled by remember {
         mutableStateOf(toolPreferences.isWebFetchJsRenderEnabled())
     }
+    var maxToolRounds by remember {
+        mutableStateOf(toolPreferences.getMaxToolRounds())
+    }
     val mcpPrefs = remember { com.nezumi_ai.data.mcp.McpPreferences.get(localContext) }
     val mcpServers by mcpPrefs.servers.collectAsState()
     var showMcpManager by remember { mutableStateOf(false) }
+
+    // 1 応答あたりのツール周回上限（セッション累積ではなく、送信ごとにリセット）
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = stringResource(id = R.string.tools_max_rounds_title),
+                fontWeight = FontWeight.Bold,
+                fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                modifier = Modifier.settingsSearchAnchor(
+                    R.string.tools_max_rounds_title,
+                    settingsSearchJumpState
+                )
+            )
+            Text(
+                text = stringResource(id = R.string.tools_max_rounds_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = colorResource(id = R.color.text_secondary)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(id = R.string.tools_max_rounds_label),
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = maxToolRounds.toString(),
+                    color = colorResource(id = R.color.primary),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Slider(
+                value = maxToolRounds.toFloat(),
+                onValueChange = {
+                    val next = it.toInt().coerceIn(
+                        com.nezumi_ai.data.inference.ToolPreferences.MIN_MAX_TOOL_ROUNDS,
+                        com.nezumi_ai.data.inference.ToolPreferences.MAX_MAX_TOOL_ROUNDS
+                    )
+                    maxToolRounds = next
+                    toolPreferences.setMaxToolRounds(next)
+                },
+                valueRange = com.nezumi_ai.data.inference.ToolPreferences.MIN_MAX_TOOL_ROUNDS.toFloat()..
+                    com.nezumi_ai.data.inference.ToolPreferences.MAX_MAX_TOOL_ROUNDS.toFloat(),
+                steps = com.nezumi_ai.data.inference.ToolPreferences.MAX_MAX_TOOL_ROUNDS -
+                    com.nezumi_ai.data.inference.ToolPreferences.MIN_MAX_TOOL_ROUNDS - 1,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),

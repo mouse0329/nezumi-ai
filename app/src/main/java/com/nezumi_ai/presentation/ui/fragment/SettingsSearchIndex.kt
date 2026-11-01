@@ -150,6 +150,7 @@ private val SETTINGS_SEARCH_ENTRIES: List<SettingsSearchEntry> = buildList {
     e(5, R.string.settings_logcat_title, R.string.settings_section_logs)
 
     // 6: ツール
+    e(6, R.string.tools_max_rounds_title, R.string.tools_settings)
     e(6, R.string.tools_web_fetch_js_render, R.string.tools_settings)
     e(6, R.string.preset_edit_mcp_server_label, R.string.tools_settings)
 

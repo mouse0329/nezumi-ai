@@ -10,6 +10,7 @@ import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.LlamaCppGpuBackend
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelFileManager
+import com.nezumi_ai.data.inference.ToolPreferences
 import com.nezumi_ai.data.memory.MemorySaveMode
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.utils.PreferencesHelper
@@ -262,6 +263,8 @@ class SettingsRepository(
                 "isLiteRtImported=$isLiteRtImported modelSupportsToolCall=$modelSupportsToolCall " +
                 "presetToolCallingOn=$presetToolCallingOn -> $enableToolCalling"
         )
+        val maxToolRounds = appContext?.let { ToolPreferences(it).getMaxToolRounds() }
+            ?: InferenceConfig.DEFAULT_MAX_TOOL_ROUNDS
         return base.copy(
             backendType = backend,
             contextWindow = contextWindow,
@@ -269,7 +272,8 @@ class SettingsRepository(
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
             requireMultimodal = requireMultimodalPref,
             customStopTokens = customStopTokens,
-            enableToolCalling = enableToolCalling
+            enableToolCalling = enableToolCalling,
+            maxToolRounds = maxToolRounds
         ).normalized()
     }
 

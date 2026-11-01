@@ -33,6 +33,11 @@ data class InferenceConfig(
     val customStopTokens: List<String> = emptyList(),
     /** ツール呼び出しを有効化（LiteRT-LM / GGUF） */
     val enableToolCalling: Boolean = false,
+    /**
+     * 1 応答あたりのツール周回上限。
+     * [enableToolCalling] が false のときはエンジン側で 1 に落とす。
+     */
+    val maxToolRounds: Int = 5,
     // Performance optimization settings
     val mtpEnabled: Boolean = false,  // Multi-Token Prediction (投機的デコーディング)
     val mtpDraftTokens: Int = 5,  // MTP draft token count (1-16)
@@ -93,6 +98,9 @@ data class InferenceConfig(
         const val MAX_BATCH_SIZE = 2048
         const val MIN_UBATCH_SIZE = 32
         const val MAX_UBATCH_SIZE = 2048
+        const val MIN_MAX_TOOL_ROUNDS = 1
+        const val MAX_MAX_TOOL_ROUNDS = 20
+        const val DEFAULT_MAX_TOOL_ROUNDS = 5
 
         fun getDefaultThreadCount(): Int {
             val availableCores = Runtime.getRuntime().availableProcessors()
@@ -131,7 +139,8 @@ data class InferenceConfig(
             llamaCppGpuBackend = normalizedGpuBackend,
             requireMultimodal = requireMultimodal,
             customStopTokens = customStopTokens.map { it.trim() }.filter { it.isNotEmpty() },
-            enableToolCalling = enableToolCalling
+            enableToolCalling = enableToolCalling,
+            maxToolRounds = maxToolRounds.coerceIn(MIN_MAX_TOOL_ROUNDS, MAX_MAX_TOOL_ROUNDS)
         )
     }
 

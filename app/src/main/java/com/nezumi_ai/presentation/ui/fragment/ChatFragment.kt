@@ -1155,6 +1155,9 @@ class ChatFragment : Fragment() {
                         ).show()
                     }
                 }
+            },
+            onContinueAfterToolLimit = {
+                viewModel.sendMessage(getString(R.string.tool_round_limit_continue))
             }
         )
         // RecyclerView の layoutManager / adapter / スクロール監視は

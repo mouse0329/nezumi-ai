@@ -23,10 +23,16 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import com.nezumi_ai.data.skill.SkillRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CancellationException
 
 private const val TOOL_TAG = "NezumiTools"
+/** 通常ツール（MCP / web_fetch 含む）の実行上限。超過時は error=timeout で返す。 */
+private const val TOOL_TIMEOUT_DEFAULT_MS = 90_000L
+/** 画像生成はローカル推論が長いため別枠。 */
+private const val TOOL_TIMEOUT_IMAGE_MS = 300_000L
 
 // LiteRTに渡すツール名の正規化マップ（ホワイトリスト方式）
 // LiteRTが返すツール名の揺れをここで吸収する
@@ -427,6 +433,31 @@ internal class NezumiLiteRtToolExecutor(
             )
         }
 
+        // ツール実行が無制限にブロックすると UI が Running のまま固まる。
+        // 画像生成は長め、それ以外（MCP / web_fetch 含む）は既定タイムアウト。
+        val timeoutMs = when (normalized) {
+            "generateimage" -> TOOL_TIMEOUT_IMAGE_MS
+            else -> TOOL_TIMEOUT_DEFAULT_MS
+        }
+        return try {
+            withTimeout(timeoutMs) {
+                dispatchTool(normalized, toolCall)
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TOOL_TAG, "Tool timed out after ${timeoutMs}ms: name=${toolCall.name}", e)
+            ToolExecutionResult(
+                success = false,
+                payload = mapOf(
+                    "success" to false,
+                    "error" to "timeout",
+                    "tool" to toolCall.name,
+                    "timeoutMs" to timeoutMs
+                )
+            )
+        }
+    }
+
+    private suspend fun dispatchTool(normalized: String, toolCall: ToolCall): ToolExecutionResult {
         return when (normalized) {
             "getcurrenttime"  -> executeGetCurrentTime(toolCall)
             "getbatterylevel" -> executeGetBatteryLevel()

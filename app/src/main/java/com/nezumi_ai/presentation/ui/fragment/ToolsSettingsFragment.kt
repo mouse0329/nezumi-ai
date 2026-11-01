@@ -47,6 +47,7 @@ class ToolsSettingsFragment : Fragment() {
 
     private var managedAlarms by mutableStateOf<List<AlarmEntity>>(emptyList())
     private var toolEnabled by mutableStateOf<Map<NezumiTool, Boolean>>(emptyMap())
+    private var maxToolRounds by mutableStateOf(ToolPreferences.DEFAULT_MAX_TOOL_ROUNDS)
 
     private var pendingEnableTool: NezumiTool? = null
 
@@ -135,8 +136,65 @@ class ToolsSettingsFragment : Fragment() {
             }
             item { Gemma4OnlyNoticeCard() }
             item { BetaNoticeCard() }
+            item { ToolRoundLimitCard() }
             item { ToolSettingsCard() }
             item { AlarmSettingsCard() }
+        }
+    }
+
+    @Composable
+    private fun ToolRoundLimitCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = stringResource(id = R.string.tools_max_rounds_title),
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = stringResource(id = R.string.tools_max_rounds_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.tools_max_rounds_label),
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = maxToolRounds.toString(),
+                        color = colorResource(id = R.color.primary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Slider(
+                    value = maxToolRounds.toFloat(),
+                    onValueChange = {
+                        val next = it.toInt().coerceIn(
+                            ToolPreferences.MIN_MAX_TOOL_ROUNDS,
+                            ToolPreferences.MAX_MAX_TOOL_ROUNDS
+                        )
+                        maxToolRounds = next
+                        toolPreferences.setMaxToolRounds(next)
+                    },
+                    valueRange = ToolPreferences.MIN_MAX_TOOL_ROUNDS.toFloat()..
+                        ToolPreferences.MAX_MAX_TOOL_ROUNDS.toFloat(),
+                    steps = ToolPreferences.MAX_MAX_TOOL_ROUNDS - ToolPreferences.MIN_MAX_TOOL_ROUNDS - 1,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 
@@ -281,6 +339,7 @@ class ToolsSettingsFragment : Fragment() {
     }
 
     private fun loadToolSettings() {
+        maxToolRounds = toolPreferences.getMaxToolRounds()
         val loaded = NezumiTool.entries.associateWith { toolPreferences.isEnabled(it) }
         toolEnabled = loaded
     }

@@ -8,6 +8,10 @@ object InferenceStreamProtocol {
     private const val TOOL_RESULTS_JSON_PREFIX = "\u0000__TOOL_RESULTS_JSON__\u0000"
     private const val EXECUTED_TOOLS_LIST_PREFIX = "\u0000__EXECUTED_TOOLS_LIST__\u0000"
     private const val TPS_PREFIX = "\u0000__TPS__\u0000"
+    /** ツール周回上限到達。payload は上限回数の整数。本文には CONTENT_MARKER を残す。 */
+    private const val TOOL_ROUND_LIMIT_PREFIX = "\u0000__TOOL_ROUND_LIMIT__\u0000"
+    /** 保存済みメッセージ content に埋め込む表示用マーカー（UI で除去）。 */
+    const val TOOL_ROUND_LIMIT_CONTENT_MARKER_PREFIX = "\u0000__TOOL_ROUND_LIMIT__\u0000"
 
     fun encodeFinal(fullText: String): String = FINAL_PREFIX + fullText
 
@@ -73,6 +77,28 @@ object InferenceStreamProtocol {
         return chunk.removePrefix(TPS_PREFIX).toFloatOrNull()
     }
 
+    fun encodeToolRoundLimit(maxRounds: Int): String =
+        TOOL_ROUND_LIMIT_PREFIX + maxRounds.coerceAtLeast(1)
+
+    fun decodeToolRoundLimit(chunk: String): Int? {
+        if (!chunk.startsWith(TOOL_ROUND_LIMIT_PREFIX)) return null
+        return chunk.removePrefix(TOOL_ROUND_LIMIT_PREFIX).toIntOrNull()
+    }
+
+    fun contentMarkerForToolRoundLimit(maxRounds: Int): String =
+        TOOL_ROUND_LIMIT_CONTENT_MARKER_PREFIX + maxRounds.coerceAtLeast(1)
+
+    fun stripToolRoundLimitMarker(content: String): Pair<String, Int?> {
+        if (content.isEmpty() || TOOL_ROUND_LIMIT_CONTENT_MARKER_PREFIX !in content) {
+            return content to null
+        }
+        val regex = Regex("\u0000__TOOL_ROUND_LIMIT__\u0000(\\d+)")
+        val match = regex.find(content)
+        val maxRounds = match?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val stripped = content.replace(regex, "").trimEnd()
+        return stripped to maxRounds
+    }
+
     /** マルチモーダル トークン読込進捗（stage|tokens|tps）。:gguf プロセスからメインへ転送する。 */
     private const val MEDIA_PROGRESS_PREFIX = "\u0000__MEDIA_PROGRESS__\u0000"
 
@@ -102,7 +128,7 @@ object InferenceStreamProtocol {
      */
     fun splitStreamChunks(chunk: String): List<String> {
         if (chunk.isEmpty()) return emptyList()
-        val markerPattern = Regex("(\u0000__FINAL__\u0000|\u0000__THINK__\u0000|\u0000__TOOL_CALL__\u0000|\u0000__TOOL_RESULT__\u0000|\u0000__TOOL_RESULTS_JSON__\u0000|\u0000__EXECUTED_TOOLS_LIST__\u0000|\u0000__TPS__\u0000|\u0000__MEDIA_PROGRESS__\u0000)")
+        val markerPattern = Regex("(\u0000__FINAL__\u0000|\u0000__THINK__\u0000|\u0000__TOOL_CALL__\u0000|\u0000__TOOL_RESULT__\u0000|\u0000__TOOL_RESULTS_JSON__\u0000|\u0000__EXECUTED_TOOLS_LIST__\u0000|\u0000__TPS__\u0000|\u0000__MEDIA_PROGRESS__\u0000|\u0000__TOOL_ROUND_LIMIT__\u0000)")
         val parts = mutableListOf<String>()
         var lastIndex = 0
         val matches = markerPattern.findAll(chunk).toList()

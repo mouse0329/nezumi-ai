@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -245,6 +247,8 @@ fun AiMessageItem(
     thinkingExpanded: Boolean,
     visibleContent: String,
     toolResults: List<ToolResultCard>,
+    toolRoundLimit: Int? = null,
+    onContinueAfterToolLimit: () -> Unit = {},
     onSaveDocument: ((String, String, String, (Boolean) -> Unit) -> Unit)?,
     onThinkingToggle: () -> Unit,
     onRegenerate: (MessageEntity) -> Unit,
@@ -387,7 +391,7 @@ fun AiMessageItem(
 
         // 本文。高さ変化は自動スクロール追従のため呼び出し側へ通知する
         // (旧 aiMessageMarkdownCompose / aiMessageText の OnLayoutChangeListener 相当)。
-        Box(
+        Column(
             modifier = Modifier
                 .widthIn(max = 280.dp)
                 .trackHeightChanges(onBodySizeChanged)
@@ -438,6 +442,27 @@ fun AiMessageItem(
                     isStreaming = message.isStreaming,
                     onSaveDocument = onSaveDocument
                 )
+            }
+            if (toolRoundLimit != null && !message.isStreaming) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = stringResource(R.string.tool_round_limit_notice, toolRoundLimit),
+                        fontSize = 12.sp,
+                        color = colorResource(R.color.text_secondary),
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = onContinueAfterToolLimit,
+                        enabled = !isGenerating
+                    ) {
+                        Text(stringResource(R.string.tool_round_limit_continue))
+                    }
+                }
             }
         }
 

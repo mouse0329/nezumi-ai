@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.inference.EngineManager
 import com.nezumi_ai.data.inference.InferenceConfig
+import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
@@ -403,17 +404,79 @@ class MiniAppRpcDispatcher(
                     if (cancelledRequests[requestId] == true) {
                         throw CancellationException("cancelled by ai.stop")
                     }
-                    sb.append(chunk)
-                    if (stream) {
-                        sink?.onStreamChunk(
-                            requestId,
-                            JSONObject().put("requestId", requestId).put("delta", chunk).toString(),
-                            done = false
-                        )
+                    // 制御マーカーは本文に混ぜず type 付き chunk で送る。
+                    // FINAL 全文差し替えはしない（終了は type=done + done=true）。
+                    for (seg in InferenceStreamProtocol.splitStreamChunks(chunk)) {
+                        if (seg.isEmpty()) continue
+                        if (InferenceStreamProtocol.decodeFinal(seg) != null) continue
+
+                        val event = JSONObject().put("requestId", requestId)
+                        when {
+                            InferenceStreamProtocol.decodeThinkChunk(seg) != null -> {
+                                val delta = InferenceStreamProtocol.decodeThinkChunk(seg)!!
+                                if (delta.isEmpty()) continue
+                                event.put("type", "thinking").put("delta", delta)
+                            }
+                            InferenceStreamProtocol.decodeToolCallChunk(seg) != null -> {
+                                val names = InferenceStreamProtocol.decodeToolCallChunk(seg)!!
+                                    .split(",")
+                                    .map { it.trim() }
+                                    .filter { it.isNotEmpty() }
+                                event.put("type", "tool_call")
+                                    .put("names", JSONArray(names))
+                                    .put("delta", "")
+                            }
+                            InferenceStreamProtocol.decodeToolResultChunk(seg) != null -> {
+                                val payload = InferenceStreamProtocol.decodeToolResultChunk(seg)!!
+                                val parts = payload.split(":", limit = 2)
+                                event.put("type", "tool_result")
+                                    .put("name", parts.getOrNull(0)?.trim().orEmpty())
+                                    .put("status", parts.getOrNull(1)?.trim().orEmpty())
+                                    .put("delta", "")
+                            }
+                            InferenceStreamProtocol.decodeToolResults(seg) != null -> {
+                                val json = InferenceStreamProtocol.decodeToolResults(seg)!!
+                                event.put("type", "tool_results")
+                                    .put("resultsJson", json)
+                                    .put("delta", "")
+                            }
+                            InferenceStreamProtocol.decodeExecutedToolsList(seg) != null -> {
+                                val names = InferenceStreamProtocol.decodeExecutedToolsList(seg)!!
+                                event.put("type", "executed_tools")
+                                    .put("names", JSONArray(names))
+                                    .put("delta", "")
+                            }
+                            InferenceStreamProtocol.decodeTps(seg) != null -> {
+                                val tps = InferenceStreamProtocol.decodeTps(seg)!!
+                                event.put("type", "tps").put("tps", tps.toDouble()).put("delta", "")
+                            }
+                            InferenceStreamProtocol.decodeToolRoundLimit(seg) != null -> {
+                                val max = InferenceStreamProtocol.decodeToolRoundLimit(seg)!!
+                                event.put("type", "tool_round_limit")
+                                    .put("maxRounds", max)
+                                    .put("delta", "")
+                            }
+                            seg.startsWith("\u0000__") -> continue
+                            else -> {
+                                sb.append(seg)
+                                event.put("type", "text").put("delta", seg)
+                            }
+                        }
+                        if (stream) {
+                            sink?.onStreamChunk(requestId, event.toString(), done = false)
+                        }
                     }
                 }
             if (stream) {
-                sink?.onStreamChunk(requestId, JSONObject().put("requestId", requestId).toString(), done = true)
+                sink?.onStreamChunk(
+                    requestId,
+                    JSONObject()
+                        .put("requestId", requestId)
+                        .put("type", "done")
+                        .put("delta", "")
+                        .toString(),
+                    done = true
+                )
             }
             JSONObject().apply {
                 put("requestId", requestId)

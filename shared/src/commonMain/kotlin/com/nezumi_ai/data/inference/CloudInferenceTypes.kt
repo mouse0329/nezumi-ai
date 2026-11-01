@@ -7,6 +7,8 @@ data class CloudInferenceParams(
     val topP: Float,
     val customStopTokens: List<String>,
     val enableToolCalling: Boolean,
+    /** 1 応答あたりのツール周回上限。enableToolCalling=false 時はエンジン側で 1。 */
+    val maxToolRounds: Int = 5,
     val contextWindow: Int,
     /** チャットの思考 ON/OFF。クラウドはサービス別パラメータへマップする。 */
     val enableThinking: Boolean = false,

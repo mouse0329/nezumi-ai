@@ -35,6 +35,7 @@ object InferenceConfigBundle {
     private const val K_LLAMA_CPP_ROPE_FREQ_SCALE = "llamaCppRopeFreqScale"
     private const val K_CUSTOM_STOP_TOKENS = "customStopTokens"
     private const val K_ENABLE_TOOL_CALLING = "enableToolCalling"
+    private const val K_MAX_TOOL_ROUNDS = "maxToolRounds"
     private const val K_MTP_ENABLED = "mtpEnabled"
     private const val K_MTP_DRAFT_TOKENS = "mtpDraftTokens"
     private const val K_FLASH_ATTENTION_ENABLED = "flashAttentionEnabled"
@@ -65,6 +66,7 @@ object InferenceConfigBundle {
         putFloat(K_LLAMA_CPP_ROPE_FREQ_SCALE, config.llamaCppRopeFreqScale)
         putStringArrayList(K_CUSTOM_STOP_TOKENS, ArrayList(config.customStopTokens))
         putBoolean(K_ENABLE_TOOL_CALLING, config.enableToolCalling)
+        putInt(K_MAX_TOOL_ROUNDS, config.maxToolRounds)
         putBoolean(K_MTP_ENABLED, config.mtpEnabled)
         putInt(K_MTP_DRAFT_TOKENS, config.mtpDraftTokens)
         putBoolean(K_FLASH_ATTENTION_ENABLED, config.flashAttentionEnabled)
@@ -108,6 +110,7 @@ object InferenceConfigBundle {
             customStopTokens = bundle.getStringArrayList(K_CUSTOM_STOP_TOKENS)?.toList()
                 ?: default.customStopTokens,
             enableToolCalling = bundle.getBoolean(K_ENABLE_TOOL_CALLING, default.enableToolCalling),
+            maxToolRounds = bundle.getInt(K_MAX_TOOL_ROUNDS, default.maxToolRounds),
             mtpEnabled = bundle.getBoolean(K_MTP_ENABLED, default.mtpEnabled),
             mtpDraftTokens = bundle.getInt(K_MTP_DRAFT_TOKENS, default.mtpDraftTokens),
             flashAttentionEnabled = bundle.getBoolean(

@@ -44,6 +44,11 @@ class ToolPreferences(private val context: Context) {
         // ページ取得（WEB_FETCH）で JavaScript を実行してから本文を取得するかどうか。
         // WEB_FETCH ツール自体の ON/OFF とは独立した、取得方式の切り替え設定。
         private const val KEY_WEB_FETCH_JS_RENDER = "web_fetch_js_render_enabled"
+        /** 1 回の応答で許すツール周回の上限（デフォルト 5）。 */
+        private const val KEY_MAX_TOOL_ROUNDS = "max_tool_rounds"
+        const val DEFAULT_MAX_TOOL_ROUNDS = 5
+        const val MIN_MAX_TOOL_ROUNDS = 1
+        const val MAX_MAX_TOOL_ROUNDS = 20
 
         /**
          * プロセス内で共有する revision カウンタ。
@@ -181,6 +186,22 @@ class ToolPreferences(private val context: Context) {
         val before = prefs.getBoolean(KEY_WEB_FETCH_JS_RENDER, false)
         prefs.edit().putBoolean(KEY_WEB_FETCH_JS_RENDER, enabled).apply()
         if (before != enabled) bumpRevision()
+    }
+
+    /**
+     * 1 回のアシスタント応答でツール呼び出しを繰り返せる上限回数。
+     * エンジン側のツール周回ループがこの値に達すると打ち切り、UI に継続導線を出す。
+     */
+    fun getMaxToolRounds(): Int =
+        prefs.getInt(KEY_MAX_TOOL_ROUNDS, DEFAULT_MAX_TOOL_ROUNDS)
+            .coerceIn(MIN_MAX_TOOL_ROUNDS, MAX_MAX_TOOL_ROUNDS)
+
+    fun setMaxToolRounds(value: Int) {
+        val next = value.coerceIn(MIN_MAX_TOOL_ROUNDS, MAX_MAX_TOOL_ROUNDS)
+        val before = prefs.getInt(KEY_MAX_TOOL_ROUNDS, DEFAULT_MAX_TOOL_ROUNDS)
+        if (before == next) return
+        prefs.edit().putInt(KEY_MAX_TOOL_ROUNDS, next).apply()
+        // 推論設定の一部だが Conversation 再作成は不要（周回上限は毎回 config から読む）。
     }
 
     fun setActivePresetToolIds(toolIdsJson: String) {
