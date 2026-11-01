@@ -1611,8 +1611,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyGgufChatTemplate(
         // パース用に params 全体をキャッシュ (旧 rnllama の gguf_chat_params と同等)
         nc->chat_params = params;
         nc->chat_params_valid = true;
-        nc->last_applied_prompt = params.prompt;
-        return utf8_to_jstring(env, params.prompt);
+        nc->last_applied_prompt = params.prompt.str();
+        return utf8_to_jstring(env, nc->last_applied_prompt);
     }
     catch (const std::exception &e)
     {
@@ -1680,8 +1680,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
         // 明示テンプレートでも同様にキャッシュし、対応パーサーで分離できるようにする
         nc->chat_params = params;
         nc->chat_params_valid = true;
-        nc->last_applied_prompt = params.prompt;
-        return utf8_to_jstring(env, params.prompt);
+        nc->last_applied_prompt = params.prompt.str();
+        return utf8_to_jstring(env, nc->last_applied_prompt);
     }
     catch (const std::exception &e)
     {
@@ -1735,15 +1735,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeParseGgufChatOutput(
             // フォーマット/パーサーで content / reasoning_content を分離する
             // (旧 rnllama 方式 nativeParseGgufChatOutput と同等)。
             common_chat_parser_params parser_params(nc->chat_params);
-            parser_params.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
-            parser_params.parse_tool_calls = true;
-            if (!nc->chat_params.parser.empty())
-            {
-                // PEG ベースのフォーマット (COMMON_CHAT_FORMAT_PEG_*) に対応
-                parser_params.parser.load(nc->chat_params.parser);
-            }
+            parser_params.parser = nc->chat_params.parser;
 
-            common_chat_msg msg = common_chat_parse(output_str, is_partial, parser_params);
+            common_chat_msg msg = common_chat_parse(common_chat_input(output_str), is_partial, parser_params);
             result["content"] = msg.content;
             result["reasoning_content"] = msg.reasoning_content;
             // テンプレートから自動選択されたパーサーが検出したツールコールも返す。
