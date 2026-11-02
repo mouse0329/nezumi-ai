@@ -101,20 +101,35 @@ class PresetSettingsFragment : Fragment() {
      * プリセットを閉じた時点でチャットのモデルロードを始める。
      * ChatFragment.onResume 待ちにすると、GGUF はテンプレート走査が先に走り
      * llama.cpp のロードが始まらない。
+     * ViewModel が取れないうちにフラグだけ立てると、閉じ直しても二度と始まらない。
      */
     private fun startPresetModelLoad() {
         if (presetLoadStarted || !isAdded) return
-        presetLoadStarted = true
         val vm = runCatching {
             ViewModelProvider(requireActivity()).get(ChatViewModel::class.java)
         }.getOrNull() ?: return
+        presetLoadStarted = true
         vm.preloadActivePresetModel()
     }
 
-    override fun onPause() {
-        // システム戻るでも onBack と同じくロードを始める。
+    private fun startPresetModelLoadIfLeaving() {
+        // ファイル読み込みピッカーや権限ダイアログでも onPause になる。
+        // そこで一回きりフラグを消費すると、モデルを選んでプリセットを閉じたとき
+        // ロードが始まらない。画面を破棄して離れるときだけ開始する。
+        if (activity?.isFinishing == true) return
+        if (!isRemoving) return
         startPresetModelLoad()
+    }
+
+    override fun onPause() {
+        startPresetModelLoadIfLeaving()
         super.onPause()
+    }
+
+    override fun onStop() {
+        // Nav の pop だと isRemoving が onPause より後に立つことがある。
+        startPresetModelLoadIfLeaving()
+        super.onStop()
     }
 
     // フラッシュライトツールは Android 上では CAMERA 権限が必要なため、
@@ -386,13 +401,19 @@ class PresetSettingsFragment : Fragment() {
                 expandedIds = if (id in expandedIds) expandedIds - id else expandedIds + id
             },
             onSelectPreset = { preset ->
-                scope.launch {
+                // rememberCoroutineScope は画面破棄でキャンセルされる。
+                // 選択の永続化が戻る操作より遅れると、閉じたあとのロードが
+                // 古いオーバーライドのまま始まるか、始まらない。
+                PreferencesHelper.setPresetDetached(appCtx, false)
+                PreferencesHelper.setPresetModelOverride(appCtx, "")
+                PreferencesHelper.setCurrentPresetId(appCtx, preset.id)
+                detached = false
+                currentPresetId = preset.id
+                overrideModelId = ""
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     presetRepository.selectPreset(preset.id)
-                    detached = false
-                    currentPresetId = preset.id
-                    overrideModelId = ""
-                    toast(getString(R.string.preset_toast_selected, preset.name))
                 }
+                toast(getString(R.string.preset_toast_selected, preset.name))
             },
             onSelectNone = {
                 val keep = overrideModelId.ifBlank {

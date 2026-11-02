@@ -31,9 +31,6 @@ import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
-import com.nezumi_ai.data.inference.MemoryEstimateCache
-import com.nezumi_ai.data.inference.MemoryEstimator
-import com.nezumi_ai.data.inference.LitertlmMemoryEstimator
 import com.nezumi_ai.data.inference.ChatMarkupSpec
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.GgufFormatResolver
@@ -945,7 +942,7 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             _memoryWarning.value = null
             val normalizedModel = normalizeModel(model)
-            val config = chatInferenceConfigForModel(normalizedModel)
+            val config = chatInferenceConfigForModel(normalizedModel, probeTemplate = false)
             val result = loadModelWithOverlay(
                 normalizedModel,
                 config,
@@ -1016,7 +1013,7 @@ class ChatViewModel(
         viewModelScope.launch {
             _cpuCompatibilityWarning.value = null
             val normalizedModel = normalizeModel(model)
-            val config = chatInferenceConfigForModel(normalizedModel)
+            val config = chatInferenceConfigForModel(normalizedModel, probeTemplate = false)
             loadModelWithOverlay(
                 normalizedModel,
                 config,
@@ -1625,7 +1622,7 @@ class ChatViewModel(
             val normalizedModel = normalizeModel(model)
             settingsRepository.updateModel(normalizedModel)
             _selectedModel.value = normalizedModel
-            val config = chatInferenceConfigForModel(normalizedModel)
+            val config = chatInferenceConfigForModel(normalizedModel, probeTemplate = false)
             val result = loadModelWithOverlay(normalizedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
                 val error = result.exceptionOrNull()
@@ -1717,50 +1714,10 @@ class ChatViewModel(
                 _uiMessage.emit(msg)
                 return@launch
             }
-            // 全走査はキャッシュする。警告確認前にロードUIを出さない。
-            val config = chatInferenceConfigForModel(selectedModel, probeTemplate = true)
-            // テンプレート確認中に現設定でメモリ推定を走らせキャッシュする（セーフティ等は対象外）
-            runCatching {
-                val engineName = toEngineModelName(selectedModel)
-                val path = when {
-                    engineName.lowercase().endsWith(".gguf") ->
-                        resolveGgufModelPath(engineName) ?: engineName
-                    engineName.lowercase().endsWith(".litertlm") ||
-                        engineName.lowercase().endsWith(".task") -> engineName
-                    else -> {
-                        // 内蔵 LiteRT モデルは modelFile から実パスを取る
-                        val local = runCatching {
-                            ModelFileManager.resolveModelName(engineName)
-                        }.getOrNull() ?: return@runCatching
-                        ModelFileManager.modelFile(appContext, local).absolutePath
-                    }
-                }
-                if (!MemoryEstimateCache.isEligible(path)) return@runCatching
-                val lower = path.lowercase()
-                if (lower.endsWith(".gguf")) {
-                    val kvNative = PreferencesHelper.getLlamaCppCacheTypeK(appContext)
-                    val kvType = MemoryEstimator.KvCacheType.entries
-                        .firstOrNull { it.nativeValue == kvNative }
-                        ?: MemoryEstimator.KvCacheType.F16
-                    MemoryEstimator.estimate(
-                        path,
-                        MemoryEstimator.EstimateParams(
-                            nCtx = config.contextWindow,
-                            nGpuLayers = config.llamaCppGpuLayers,
-                            nBatch = config.llamaCppBatchSize,
-                            kvCacheType = kvType,
-                        )
-                    )
-                } else if (lower.endsWith(".litertlm") || lower.endsWith(".task")) {
-                    LitertlmMemoryEstimator.estimate(
-                        path,
-                        LitertlmMemoryEstimator.EstimateParams(
-                            maxNumTokens = config.contextWindow,
-                            withVisionAudio = config.requireMultimodal,
-                        )
-                    )
-                }
-            }.onFailure { Log.w(TAG, "preload memory estimate failed", it) }
+            // テンプレート全走査や llama.cpp のメモリ見積もりを先に走らせると、
+            // 実ロード (loadModelWithOverlay) まで届かずオーバーレイも出ない。
+            // Thinking は保存済み capability だけを見て、走査はロード後に任せる。
+            val config = chatInferenceConfigForModel(selectedModel, probeTemplate = false)
             Log.d(TAG, "preloadActivePresetModel: start model=$selectedModel")
             val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
@@ -2249,11 +2206,10 @@ class ChatViewModel(
                 )
                 return
             }
-            // GGUF のテンプレート全走査はロード時間に含める。結果はディスクキャッシュする。
-            // 警告確認前にロードUIを出さないため、ここではオーバーレイを立てない。
-            val includeTemplateProbe = engineModelName.endsWith(".gguf", ignoreCase = true)
+            // GGUF テンプレートの全走査をロードの前に置くと、llama.cpp のロードが始まらない。
+            // Thinking は保存済み capability で決め、未保存分はロード後の自動有効化に任せる。
             val modelLoadStartMs = System.currentTimeMillis()
-            val baseConfig = chatInferenceConfigForModel(selectedModel, probeTemplate = includeTemplateProbe)
+            val baseConfig = chatInferenceConfigForModel(selectedModel, probeTemplate = false)
             val backend = settingsRepository.getBackendForModel(selectedModel)
             // Bug fix: LiteRT-LM 外部インポートモデル (.task / .litertlm) については、
             // モデル設定で画像/音声のスイッチを ON にしていない限り requireMultimodal を立てない。
@@ -2276,7 +2232,7 @@ class ChatViewModel(
             Log.d(TAG, "generateAIResponse START: model=$selectedModel, enableThinking=${config.enableThinking}, backend=${config.backendType}, requestedBackend=$backend")
 
             // Phase 11: ロード進捗ログの細分化
-            Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel templateProbe=$includeTemplateProbe")
+            Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel templateProbe=false")
 
             // ロード前メモリ警告を出す。ユーザーが続行を選ぶまで実ロードは始めない。
             // proceedWithModelLoad 側で skipMemoryWarning=true にしてから再呼び出しする。
@@ -3895,7 +3851,7 @@ class ChatViewModel(
             delay(500L)
 
             val engineModelName = toEngineModelName(selectedModel)
-            val baseConfig = chatInferenceConfigForModel(selectedModel)
+            val baseConfig = chatInferenceConfigForModel(selectedModel, probeTemplate = false)
             val backend = settingsRepository.getBackendForModel(selectedModel)
             val config = baseConfig.copy(backendType = backend).normalized()
 

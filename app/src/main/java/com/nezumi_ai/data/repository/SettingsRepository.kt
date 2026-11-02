@@ -167,15 +167,19 @@ class SettingsRepository(
         val requireMultimodalPref = appContext?.let { PreferencesHelper.isRequireMultimodal(it) } ?: false
         // ロード開始前の GGUF 全メタデータ走査はここで止まって見える。
         // probeTemplate=false のときは保存済み capability だけで Thinking を決める。
+        val hasSavedThinking = isGguf && appContext != null &&
+            ImportedModelCapabilityStore.hasThinkingSetting(appContext, model)
+        val savedThinkingEnabled = hasSavedThinking && appContext != null &&
+            ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled
         val templateDeclaresThinking = probeTemplate && appContext != null &&
             com.nezumi_ai.data.inference.ChatMarkupSpec.fromChatTemplate(
                 com.nezumi_ai.data.inference.GgufFormatResolver.resolveChatTemplateText(appContext, model)
             ).supportsThinking
-        val ggufThinking = isGguf && appContext != null && templateDeclaresThinking &&
-            (
-                !ImportedModelCapabilityStore.hasThinkingSetting(appContext, model) ||
-                    ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled
-            )
+        val ggufThinking = isGguf && appContext != null && when {
+            probeTemplate -> templateDeclaresThinking &&
+                (!hasSavedThinking || savedThinkingEnabled)
+            else -> savedThinkingEnabled
+        }
         // 外部インポート LiteRT-LM (.task / .litertlm) も、モデル設定で Thinking を ON にしていれば
         // enable_thinking を SamplerConfig 経由でモデルに渡す。
         val isLiteRtImportedEarly = isLiteRtImportedModel(model)
