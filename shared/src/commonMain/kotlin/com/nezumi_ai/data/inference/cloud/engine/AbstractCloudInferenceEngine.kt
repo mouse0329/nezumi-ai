@@ -74,7 +74,7 @@ abstract class AbstractCloudInferenceEngine(
 
     private fun isConfiguredForCurrentModel(): Boolean {
         val id = currentModelId
-        return if (id != null && configProvider.hasOverride(id)) configProvider.isConfigured(id)
+        return if (id != null) configProvider.isConfigured(id)
         else CloudApiKeyStore.isConfigured(secureStore, provider)
     }
 

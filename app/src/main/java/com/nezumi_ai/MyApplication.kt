@@ -16,6 +16,8 @@ import androidx.work.WorkManager
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.CacheManager
 import com.nezumi_ai.data.inference.ModelDownloadWorker
+import com.nezumi_ai.data.inference.cloud.CloudModelSync
+import com.nezumi_ai.data.inference.cloud.refreshAllForContext
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.utils.LocaleHelper
@@ -171,6 +173,14 @@ class MyApplication : Application() {
         // Skills are scanned once per process start; conversations only use this cached result.
         applicationScope.launch(Dispatchers.IO) {
             com.nezumi_ai.data.skill.SkillRepository(this@MyApplication).scan(force = true)
+        }
+
+        // クラウドとローカルサーバーのモデル一覧を起動時に同期する。
+        // 送信時にも取り直す。失敗した接続先は前回の一覧を残す。
+        applicationScope.launch(Dispatchers.IO) {
+            runCatching {
+                CloudModelSync.refreshAllForContext(this@MyApplication)
+            }.onFailure { Log.w(TAG, "cloud model list refresh failed", it) }
         }
 
         initializePresetDefaults()

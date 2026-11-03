@@ -59,13 +59,21 @@ object CloudUserModelRegistry {
     }
 
     fun resolveApiKey(plain: PlatformSecureStore, secure: PlatformSecureStore, modelId: String, provider: CloudApiKeyStore.Provider): String {
-        val own = getOverrideApiKey(secure, modelId)
-        return own.ifBlank { CloudApiKeyStore.getApiKey(secure, provider) }
+        // API キーはプロバイダにつき一つ。接続先ごとのキーがあるローカルサーバーだけそれを優先する。
+        val parsed = CloudModelId.parse(modelId)
+        val endpoint = parsed?.let { CloudModelId.endpointOf(it.modelName) }
+        if (!endpoint.isNullOrBlank()) {
+            val own = secure.get(endpointKey(endpoint))?.trim().orEmpty()
+            if (own.isNotBlank()) return own
+        }
+        return CloudApiKeyStore.getApiKey(secure, provider)
     }
 
     fun resolveBaseUrl(plain: PlatformSecureStore, secure: PlatformSecureStore, modelId: String, provider: CloudApiKeyStore.Provider): String {
-        val own = getOverrideBaseUrl(secure, modelId)
-        return own.ifBlank { CloudApiKeyStore.getBaseUrl(secure, provider) }
+        val parsed = CloudModelId.parse(modelId)
+        val embedded = parsed?.let { CloudModelId.endpointOf(it.modelName) }
+        if (!embedded.isNullOrBlank()) return embedded
+        return CloudApiKeyStore.getBaseUrl(secure, provider)
     }
 
     fun isConfigured(plain: PlatformSecureStore, secure: PlatformSecureStore, modelId: String): Boolean {
@@ -86,6 +94,54 @@ object CloudUserModelRegistry {
     private fun save(plain: PlatformSecureStore, list: List<String>) {
         plain.put(KEY, list.joinToString("\n"))
     }
+
+    /**
+     * 指定プロバイダかつ指定接続先のモデルだけを [bareNames] で置き換える。
+     * 取得に成功したときだけ呼ぶ。他の接続先のモデルは残す。
+     */
+    fun replaceForEndpoint(
+        plain: PlatformSecureStore,
+        secure: PlatformSecureStore,
+        provider: CloudApiKeyStore.Provider,
+        endpointUrl: String,
+        primaryUrl: String,
+        bareNames: List<String>
+    ) {
+        val endpoint = endpointUrl.trim().trimEnd('/')
+        val primary = primaryUrl.trim().trimEnd('/')
+        val current = list(plain)
+        val kept = current.filterNot { id -> belongsToEndpoint(id, provider, endpoint, primary) }
+        current.filter { belongsToEndpoint(it, provider, endpoint, primary) }.forEach { id ->
+            clearOverride(plain, secure, id)
+        }
+        val next = (kept + bareNames.map { name ->
+            CloudModelId.buildWithEndpoint(provider, name, endpoint, primary)
+        }).distinct()
+        save(plain, next)
+        notifyChanged()
+    }
+
+    fun removeProvider(plain: PlatformSecureStore, secure: PlatformSecureStore, provider: CloudApiKeyStore.Provider) {
+        val current = list(plain)
+        val removed = current.filter { CloudModelId.parse(it)?.provider == provider }
+        removed.forEach { clearOverride(plain, secure, it) }
+        save(plain, current.filter { CloudModelId.parse(it)?.provider != provider })
+        notifyChanged()
+    }
+
+    private fun belongsToEndpoint(
+        modelId: String,
+        provider: CloudApiKeyStore.Provider,
+        endpoint: String,
+        primary: String
+    ): Boolean {
+        val parsed = CloudModelId.parse(modelId) ?: return false
+        if (parsed.provider != provider) return false
+        val embedded = CloudModelId.endpointOf(parsed.modelName)?.trimEnd('/')
+        return if (endpoint == primary) embedded == null || embedded == endpoint else embedded == endpoint
+    }
+
+    fun endpointKey(endpointUrl: String): String = "epkey." + endpointUrl.trim().trimEnd('/')
 }
 
 /** [CloudModelConfigProvider] 共通実装。 */

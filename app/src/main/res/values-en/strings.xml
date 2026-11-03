@@ -87,6 +87,9 @@ Enjoy chatting with your AI!</string>
     <string name="thinking_effort_low">Low</string>
     <string name="thinking_effort_medium">Medium</string>
     <string name="thinking_effort_high">High</string>
+    <string name="thinking_effort_minimal">Minimal</string>
+    <string name="thinking_effort_max">Max</string>
+    <string name="thinking_effort_xhigh">Extra high</string>
     <string name="scroll_to_bottom">Scroll to bottom</string>
     <string name="scroll_to_bottom_icon"></string>
     <string name="revoke_prompt">Undo</string>
@@ -1192,9 +1195,9 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="model_settings_local_import_button">Add model file</string>
     <string name="model_settings_sd_zip_import_title">Import SD model zip</string>
     <!-- Cloud models (integrated into the model management screen) -->
-    <string name="cloud_models_entry_button">Add cloud model</string>
+    <string name="cloud_models_entry_button">Add connection</string>
     <string name="cloud_models_screen_title">Cloud models</string>
-    <string name="cloud_models_screen_description">Add Claude / Gemini / ChatGPT / Ollama / LM Studio models to make them selectable from presets. API keys are stored encrypted with the Android Keystore.</string>
+    <string name="cloud_models_screen_description">One API key per provider. Connecting adds every usable model. Local Ollama and LM Studio can register more than one endpoint.</string>
     <string name="cloud_models_provider_claude">Claude (Anthropic)</string>
     <string name="cloud_models_provider_gemini">Gemini (Google)</string>
     <string name="cloud_models_provider_openai">ChatGPT (OpenAI)</string>
@@ -1211,8 +1214,8 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="cloud_models_remove_button">Remove</string>
     <string name="cloud_models_add_failed_not_configured">Please set the API key / Base URL first</string>
     <string name="cloud_models_add_failed_blank">Please enter a model name</string>
-    <string name="cloud_models_add_dialog_title_add">Add cloud model</string>
-    <string name="cloud_models_add_dialog_title_edit">Cloud model settings</string>
+    <string name="cloud_models_add_dialog_title_add">Add model connection</string>
+    <string name="cloud_models_add_dialog_title_edit">Model connection</string>
     <string name="cloud_models_provider_label">Provider</string>
     <string name="cloud_models_model_name_label">Model name</string>
     <string name="cloud_models_model_name_hint_claude">e.g. claude-sonnet-4-5, claude-3-5-haiku-latest</string>
@@ -1222,12 +1225,22 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="cloud_models_model_name_hint_lmstudio">e.g. the model name currently loaded in LM Studio</string>
     <string name="cloud_models_fetch_models">Fetch model list</string>
     <string name="cloud_models_fetch_models_loading">Fetching…</string>
-    <string name="cloud_models_fetch_models_empty">Could not fetch the model list. Check that the server is running.</string>
+    <string name="cloud_models_fetch_models_empty">Could not fetch the model list. Check the API key and endpoint.</string>
+    <string name="cloud_models_synced">Added %1$d models</string>
+    <string name="cloud_models_connect_button">Connect and fetch models</string>
+    <string name="cloud_models_disconnect_button">Disconnect</string>
+    <string name="cloud_models_sync_hint">One key per provider. Every usable model is added. Only local Ollama and LM Studio can register multiple endpoints.</string>
     <string name="cloud_models_credentials_saved">Settings saved</string>
     <string name="cloud_models_credentials_save_failed">Failed to save</string>
     <string name="cloud_models_status_configured">Configured</string>
     <string name="cloud_models_status_missing">Not configured</string>
     <string name="model_tag_cloud">Cloud</string>
+    <string name="cloud_models_endpoint_models">%1$d models</string>
+    <string name="cloud_models_tag_image">Image</string>
+    <string name="cloud_models_tag_audio">Audio</string>
+    <string name="cloud_models_hide_button">Hide</string>
+    <string name="cloud_models_unhide_button">Show</string>
+    <string name="cloud_models_hidden_tag">Hidden</string>
     <string name="cloud_models_empty">No cloud models have been added yet.</string>
     <!-- Default preset model-missing modal -->
     <string name="default_model_missing_title">No model selected</string>
@@ -1649,6 +1662,7 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="cloud_model_unconfigured_preset">The preset’s cloud model (%1$s) is missing an API key or endpoint</string>
     <string name="preset_model_not_downloaded">The preset’s model (%1$s) has not been downloaded</string>
     <string name="cloud_model_unconfigured">Cloud model (%1$s) is missing an API key or endpoint. Please configure it from the settings screen.</string>
+    <string name="cloud_model_unavailable">This model cannot be used (%1$s)</string>
     <string name="selected_model_not_downloaded">The selected model (%1$s) has not been downloaded. Please download it from the settings screen.</string>
     <string name="web_model_unsupported">This model is a web build. Web-build models cannot be used in the Android app. Please use the .task file for the on-device build.</string>
     <string name="model_error_path_with_msg">%1$s\nPath: %2$s</string>

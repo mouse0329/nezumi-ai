@@ -41,3 +41,39 @@ fun CloudUserModelRegistry.isConfiguredForContext(context: Context, modelId: Str
 
 fun CloudUserModelRegistry.configProvider(context: Context): DefaultCloudModelConfigProvider =
     DefaultCloudModelConfigProvider(CloudStoresHolder.userModels(context), CloudStoresHolder.secure(context))
+
+suspend fun CloudModelSync.refreshAllForContext(context: Context) {
+    refreshAll(CloudStoresHolder.userModels(context), CloudStoresHolder.secure(context))
+}
+
+suspend fun CloudModelSync.ensureFreshForContext(context: Context, modelId: String): Int =
+    ensureFresh(CloudStoresHolder.userModels(context), CloudStoresHolder.secure(context), modelId)
+
+fun CloudModelSync.availabilityForContext(context: Context, modelId: String): CloudModelSync.Availability =
+    availability(CloudStoresHolder.userModels(context), CloudStoresHolder.secure(context), modelId)
+
+suspend fun CloudModelSync.connectForContext(
+    context: Context,
+    provider: CloudApiKeyStore.Provider,
+    baseUrl: String,
+    apiKey: String
+): Int = connect(
+    CloudStoresHolder.userModels(context),
+    CloudStoresHolder.secure(context),
+    provider,
+    baseUrl,
+    apiKey
+)
+
+fun CloudModelSync.disconnectForContext(
+    context: Context,
+    provider: CloudApiKeyStore.Provider,
+    endpointUrl: String
+) {
+    disconnect(
+        CloudStoresHolder.userModels(context),
+        CloudStoresHolder.secure(context),
+        provider,
+        endpointUrl
+    )
+}

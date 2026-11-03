@@ -1209,6 +1209,13 @@ class ChatFragment : Fragment() {
             }
         }
 
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.ollamaThinkingRevision.collect {
+                updateThinkingToggleVisibility()
+                updateMediaAvailability(currentModelKey)
+            }
+        }
+
         // セッションID取得（Navigation argsから、またはSettingsから）
         val sessionId = args.sessionId
         if (sessionId <= 0) {
@@ -2421,6 +2428,9 @@ class ChatFragment : Fragment() {
         // 構成済みクラウドモデルもチャットのモデル表示・選択肢に含める
         com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.listForContext(requireContext()).forEach { modelId ->
             if (!com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.isConfiguredForContext(requireContext(), modelId)) {
+                return@forEach
+            }
+            if (com.nezumi_ai.utils.CloudModelVisibility.isHidden(requireContext(), modelId)) {
                 return@forEach
             }
             options += ModelOption(

@@ -118,6 +118,10 @@ object ImportedModelCapabilityStore {
     }
 
     fun resolveForModel(context: Context, modelKey: String): ImportedModelCapabilities {
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelKey)) {
+            val media = com.nezumi_ai.data.inference.cloud.CloudMediaCapability.forModel(modelKey)
+            return ImportedModelCapabilities(imageEnabled = media.image, audioEnabled = media.audio)
+        }
         val lowered = modelKey.lowercase()
         val isAbsolutePath = File(modelKey).isAbsolute
         if (isAbsolutePath && lowered.endsWith(".gguf")) {

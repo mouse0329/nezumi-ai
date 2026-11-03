@@ -511,6 +511,7 @@ open class ModelSettingsFragment : Fragment() {
             applyImportedModelFilters(importedTasks)
         }
         val cloudModels = remember(cloudModelsRevision) { registeredCloudModels }
+        val cloudGroups = remember(cloudModelsRevision) { cloudEndpointGroups() }
 
         Box(
             modifier = Modifier
@@ -726,9 +727,9 @@ open class ModelSettingsFragment : Fragment() {
                             )
                         }
                     }
-                    // クラウドモデルを追加済みモデルと同じ場所に並べる
-                    items(cloudModels) { modelId ->
-                        CloudModelListItem(modelId = modelId)
+                    // クラウドモデルはアクセスポイントごとにまとめる。ローカルはそのまま。
+                    items(cloudGroups) { group ->
+                        CloudEndpointGroupItem(group)
                     }
                     item { MmprojFilesCard() }
                     // 追加ボタン群は右下の FAB メニュ (ModelAddFabMenu) に集約したためカードは廃止。

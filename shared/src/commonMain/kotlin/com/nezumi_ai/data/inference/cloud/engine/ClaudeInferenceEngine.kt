@@ -61,16 +61,39 @@ class ClaudeInferenceEngine(
             }
             if (systemText.isNotBlank()) put("system", systemText)
             if (config.enableThinking) {
-                val effort = CloudThinkingEffort.normalize(config.thinkingEffort)
-                if (CloudThinkingEffort.claudeSupportsEffort(model)) {
-                    putJsonObject("output_config") { put("effort", effort) }
-                    putJsonObject("thinking") { put("type", "adaptive") }
-                } else {
-                    putJsonObject("thinking") {
-                        put("type", "enabled")
-                        put("budget_tokens", CloudThinkingEffort.claudeBudgetTokens(effort, config.maxTokens))
+                val levels = CloudThinkingEffort.levelsForModel("cloud:claude:$model")
+                val effort = CloudThinkingEffort.normalize(
+                    config.thinkingEffort,
+                    levels.ifEmpty { CloudThinkingEffort.GRADED }
+                )
+                when {
+                    CloudThinkingEffort.claudeAlwaysOn(model) -> {
+                        if (CloudThinkingEffort.claudeSupportsEffort(model)) {
+                            putJsonObject("output_config") { put("effort", effort) }
+                        }
+                    }
+                    CloudThinkingEffort.claudeUsesAdaptive(model) -> {
+                        if (CloudThinkingEffort.claudeSupportsEffort(model)) {
+                            putJsonObject("output_config") { put("effort", effort) }
+                        }
+                        putJsonObject("thinking") { put("type", "adaptive") }
+                    }
+                    CloudThinkingEffort.claudeUsesBudget(model) -> {
+                        if (CloudThinkingEffort.claudeSupportsEffort(model)) {
+                            putJsonObject("output_config") { put("effort", effort) }
+                        }
+                        putJsonObject("thinking") {
+                            put("type", "enabled")
+                            put("budget_tokens", CloudThinkingEffort.claudeBudgetTokens(effort, config.maxTokens))
+                        }
                     }
                 }
+            } else if (CloudThinkingEffort.claudeUsesAdaptive(model) &&
+                !CloudThinkingEffort.claudeEffortDisablesByOmit(model)
+            ) {
+                putJsonObject("thinking") { put("type", "disabled") }
+            } else if (CloudThinkingEffort.claudeUsesBudget(model)) {
+                putJsonObject("thinking") { put("type", "disabled") }
             }
             if (config.customStopTokens.isNotEmpty()) putJsonArray("stop_sequences") { config.customStopTokens.forEach { add(it) } }
             putJsonArray("messages") {

@@ -224,7 +224,9 @@ private fun ThinkingEffortSegments(
             PreferencesHelper.THINKING_EFFORT_LOW -> stringResource(R.string.thinking_effort_low)
             PreferencesHelper.THINKING_EFFORT_MEDIUM -> stringResource(R.string.thinking_effort_medium)
             PreferencesHelper.THINKING_EFFORT_HIGH -> stringResource(R.string.thinking_effort_high)
-            // 未知のレベル (minimal 等) はリソースがないため生の値をそのまま表示する。
+            "minimal" -> stringResource(R.string.thinking_effort_minimal)
+            "max" -> stringResource(R.string.thinking_effort_max)
+            "xhigh" -> stringResource(R.string.thinking_effort_xhigh)
             else -> level
         }
         level to label

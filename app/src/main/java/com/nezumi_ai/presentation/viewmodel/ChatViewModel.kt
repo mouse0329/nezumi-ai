@@ -52,6 +52,9 @@ import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolExecutionResult
 import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
+import com.nezumi_ai.data.inference.cloud.CloudModelSync
+import com.nezumi_ai.data.inference.cloud.availabilityForContext
+import com.nezumi_ai.data.inference.cloud.ensureFreshForContext
 import com.nezumi_ai.data.inference.prompt.CloudRenderer
 import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 import com.nezumi_ai.data.inference.PromptTemplateStore
@@ -599,6 +602,9 @@ class ChatViewModel(
     val chatSessionThinkingEffort: StateFlow<String> = _chatSessionThinkingEffort.asStateFlow()
     private val chatSessionThinkingEnabledOverride: StateFlow<Boolean> = _chatSessionThinkingEnabledOverride.asStateFlow()
 
+    /** Ollama の /api/show が届いたらシンキング UI を取り直す。 */
+    internal val ollamaThinkingRevision = MutableStateFlow(0)
+
     private var hasUserToggledThinking = false
     private var lastThinkingSessionId: Long? = null
 
@@ -1067,6 +1073,9 @@ class ChatViewModel(
     }
 
     init {
+        com.nezumi_ai.data.inference.cloud.OllamaThinkingCache.onUpdated = {
+            ollamaThinkingRevision.value = ollamaThinkingRevision.value + 1
+        }
         // Phase 13: アプリ起動時に isStreaming フラグをクリーニング
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1411,6 +1420,10 @@ class ChatViewModel(
      */
     fun isThinkingSwitchableForModel(modelKey: String): Boolean {
         return runCatching {
+            if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelKey)) {
+                return@runCatching com.nezumi_ai.data.inference.cloud.CloudThinkingEffort
+                    .controlForModel(modelKey).canDisable
+            }
             if (isAlwaysOnThinkingModel(modelKey)) return@runCatching false
             val template = resolveChatTemplateForThinking(modelKey) ?: return@runCatching true
             com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
@@ -1424,6 +1437,10 @@ class ChatViewModel(
      */
     fun isAlwaysOnThinkingModel(modelKey: String): Boolean {
         return runCatching {
+            if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelKey)) {
+                val control = com.nezumi_ai.data.inference.cloud.CloudThinkingEffort.controlForModel(modelKey)
+                return@runCatching control.showToggle && !control.canDisable
+            }
             val template = resolveChatTemplateForThinking(modelKey) ?: return@runCatching false
             val h = com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
             // 生成プロンプトで無条件に <think> を開く系を最優先
@@ -1451,6 +1468,23 @@ class ChatViewModel(
         val resolved = resolveGgufModelPath(modelKey) ?: modelKey.trim()
         return com.nezumi_ai.data.inference.GgufFormatResolver
             .resolveChatTemplateText(appContext, resolved)
+    }
+
+    /** 起動時と送信時に同期した一覧に無いクラウドモデルは使えない。null なら送ってよい。 */
+    internal suspend fun cloudUseBlockMessage(modelId: String, forPreset: Boolean = false): String? {
+        if (!com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelId)) return null
+        CloudModelSync.ensureFreshForContext(appContext, modelId)
+        val label = com.nezumi_ai.data.inference.cloud.CloudModelId.displayLabel(modelId)
+        return when (CloudModelSync.availabilityForContext(appContext, modelId)) {
+            com.nezumi_ai.data.inference.cloud.CloudModelSync.Availability.NOT_CONFIGURED ->
+                appContext.getString(
+                    if (forPreset) R.string.cloud_model_unconfigured_preset else R.string.cloud_model_unconfigured,
+                    label
+                )
+            com.nezumi_ai.data.inference.cloud.CloudModelSync.Availability.NOT_IN_LIST ->
+                appContext.getString(R.string.cloud_model_unavailable, label)
+            com.nezumi_ai.data.inference.cloud.CloudModelSync.Availability.OK -> null
+        }
     }
 
     fun setChatSessionThinkingEffort(effort: String) {
@@ -1591,6 +1625,12 @@ class ChatViewModel(
             val normalizedModel = normalizeModel(model)
             settingsRepository.updateModel(normalizedModel)
             _selectedModel.value = normalizedModel
+            val cloudBlock = cloudUseBlockMessage(normalizedModel)
+            if (cloudBlock != null) {
+                if (modelLoadingOverlayDepth == 0) clearModelLoadingIndicator()
+                _uiMessage.emit(cloudBlock)
+                return@launch
+            }
             val config = chatInferenceConfigForModel(normalizedModel, probeTemplate = false)
             val result = loadModelWithOverlay(normalizedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
@@ -1679,21 +1719,30 @@ class ChatViewModel(
             val selectedModel = getActiveSelectedModel()
             _selectedModel.value = selectedModel
             val engineModelName = toEngineModelName(selectedModel)
-            if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
-                val msg = if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)) {
-                    appContext.getString(R.string.cloud_model_unconfigured_preset, selectedModel)
-                } else {
-                    appContext.getString(R.string.preset_model_not_downloaded, selectedModel)
+            val isCloud = com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)
+            if (isCloud) {
+                val cloudBlock = cloudUseBlockMessage(selectedModel, forPreset = true)
+                if (cloudBlock != null) {
+                    if (modelLoadingOverlayDepth == 0) clearModelLoadingIndicator()
+                    _uiMessage.emit(cloudBlock)
+                    return@launch
                 }
-                _uiMessage.emit(msg)
+            } else if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
+                _uiMessage.emit(appContext.getString(R.string.preset_model_not_downloaded, selectedModel))
                 return@launch
             }
-            // chatInferenceConfigForModel 内の isAlwaysOnThinkingModel が
-            // 未キャッシュの GGUF chat_template を読む間、オーバーレイ無しだとフリーズに見える。
-            // loadModelWithOverlay 到達前に準備中表示を開始する (depth は増やさない)。
-            beginModelPreparationIndicator(
-                appContext.getString(R.string.model_loading_phase_template_scan)
-            )
+            val manager = runCatching { requireModelManager() }.getOrNull()
+            val currentLoaded = manager?.getCurrentModelName()
+            val releaseLocal = isCloud && currentLoaded != null &&
+                !com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(currentLoaded)
+            if (!isCloud || releaseLocal) {
+                beginModelPreparationIndicator(
+                    appContext.getString(
+                        if (releaseLocal) R.string.model_loading_phase_memory_release
+                        else R.string.model_loading_phase_template_scan
+                    )
+                )
+            }
             val config = chatInferenceConfigForModel(selectedModel, probeTemplate = false)
             Log.d(TAG, "preloadActivePresetModel: start model=$selectedModel")
             val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
@@ -3963,6 +4012,10 @@ class ChatViewModel(
             return Result.success(Unit)
         }
 
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(model)) {
+            return loadCloudWithoutWeightOverlay(manager, engineModelName, config, onlyIfAvailable)
+        }
+
         // ロード前メモリ警告は、オーバーレイや実ロードを始める前に出す。
         // 警告表示中は続行を選ぶまでロードを開始しない。
         if (!effectiveSkipMemoryWarning) {
@@ -4208,6 +4261,40 @@ class ChatViewModel(
             loadResult
         } finally {
             releaseModelLoadingOverlay()
+        }
+    }
+
+    /**
+     * クラウドは重みロードをしない。ロード画面は、ローカルモデルがメモリに載っていて
+     * それを解放するときだけ出す。
+     */
+    private suspend fun loadCloudWithoutWeightOverlay(
+        manager: ModelManager,
+        engineModelName: String,
+        config: InferenceConfig,
+        onlyIfAvailable: Boolean
+    ): Result<Unit> {
+        val current = manager.getCurrentModelName()
+        val releaseLocal = current != null &&
+            !com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(current)
+        if (!releaseLocal && modelLoadingOverlayDepth == 0 && _isModelLoading.value) {
+            clearModelLoadingIndicator()
+        }
+        if (releaseLocal) {
+            acquireModelLoadingOverlay()
+            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_release))
+        }
+        return try {
+            val loadResult = modelLoadMutex.withLock {
+                withContext(Dispatchers.IO) {
+                    if (onlyIfAvailable) manager.initializeModelIfAvailable(engineModelName, config)
+                    else manager.initializeModel(engineModelName, config)
+                }
+            }
+            if (loadResult.isSuccess) setMeterLoadedModel(engineModelName)
+            loadResult
+        } finally {
+            if (releaseLocal) releaseModelLoadingOverlay()
         }
     }
 

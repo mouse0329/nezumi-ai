@@ -544,8 +544,9 @@ class SettingsRepository(
     /** チャット画面の「このチャットでシンキングOFF」トグルを出すか（GGUF / LiteRT-LM は設定で Thinking 有効時のみ） */
     fun modelSupportsGemmaThinking(model: String, appContext: android.content.Context? = null): Boolean {
         if (isBuiltinGemma4Model(model)) return true
-        // クラウドモデルは応答中の <think> タグを表示・トグルできるよう常にサポート扱いにする。
-        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(model)) return true
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(model)) {
+            return com.nezumi_ai.data.inference.cloud.CloudThinkingEffort.controlForModel(model).showToggle
+        }
         val ctx = appContext ?: return false
         if (isGgufModel(model)) {
             // テンプレートが Thinking を宣言していても、モデル設定で明示 OFF なら UI を出さない。

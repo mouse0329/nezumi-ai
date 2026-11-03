@@ -7,6 +7,7 @@ import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
 import com.nezumi_ai.data.inference.cloud.CloudThinkingEffort
+import com.nezumi_ai.data.inference.cloud.OllamaThinkingCache
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
@@ -114,10 +115,16 @@ class OllamaInferenceEngine(
                     }
                 }
             }
-            // 思考が使えない原因: think 未指定だと思考モデルが思考を出さず、
-            // 出しても message.thinking を読んでいなかった。
-            // ON は low/medium/high、OFF は false。
-            when (val think = CloudThinkingEffort.ollamaThinkValue(config.enableThinking, config.thinkingEffort)) {
+            // think はモデルの /api/show にある値だけ送る。未対応の強度文字列は無視される。
+            val spec = currentModelId?.let { OllamaThinkingCache.get(it) }
+                ?: OllamaThinkingCache.getByName(model)
+            when (val think = CloudThinkingEffort.ollamaThinkValue(
+                config.enableThinking,
+                config.thinkingEffort,
+                spec,
+                model
+            )) {
+                null -> Unit
                 is Boolean -> put("think", think)
                 is String -> put("think", think)
             }

@@ -13,8 +13,41 @@ object CloudModelId {
         return t == LEGACY_CLAUDE_API || t == LEGACY_GEMINI_API
     }
 
+    private const val ENDPOINT_MARK = "||"
+
     fun build(provider: CloudApiKeyStore.Provider, modelName: String): String =
         "$PREFIX${provider.id}:${modelName.trim()}"
+
+    /**
+     * ローカルの Ollama / LM Studio は接続先を複数持てる。
+     * 既定の Base URL 以外はモデル名の末尾に `||URL` を付けて区別する。
+     */
+    fun buildWithEndpoint(
+        provider: CloudApiKeyStore.Provider,
+        modelName: String,
+        endpointUrl: String?,
+        primaryUrl: String
+    ): String {
+        val bare = bareModelName(modelName).trim()
+        val endpoint = endpointUrl?.trim()?.trimEnd('/').orEmpty()
+        val primary = primaryUrl.trim().trimEnd('/')
+        return if (endpoint.isEmpty() || endpoint == primary) build(provider, bare)
+        else build(provider, "$bare$ENDPOINT_MARK$endpoint")
+    }
+
+    /** `name||http://host:port` から接続先を取り出す。無ければ null。 */
+    fun endpointOf(modelName: String): String? {
+        val i = modelName.lastIndexOf(ENDPOINT_MARK)
+        if (i < 0) return null
+        val url = modelName.substring(i + ENDPOINT_MARK.length).trim().trimEnd('/')
+        return url.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+    }
+
+    fun bareModelName(modelName: String): String {
+        if (endpointOf(modelName) == null) return modelName.trim()
+        val i = modelName.lastIndexOf(ENDPOINT_MARK)
+        return modelName.substring(0, i).trim()
+    }
 
     data class Parsed(val provider: CloudApiKeyStore.Provider, val modelName: String)
 
@@ -45,6 +78,10 @@ object CloudModelId {
             CloudApiKeyStore.Provider.OLLAMA_REMOTE -> "Ollama (Cloud)"
             CloudApiKeyStore.Provider.LM_STUDIO -> "LM Studio"
         }
-        return "$label · ${parsed.modelName}"
+        val bare = bareModelName(parsed.modelName)
+        val host = endpointOf(parsed.modelName)?.let { url ->
+            url.removePrefix("https://").removePrefix("http://")
+        }
+        return if (host.isNullOrBlank()) "$label · $bare" else "$label · $bare · $host"
     }
 }

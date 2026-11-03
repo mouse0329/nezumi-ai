@@ -80,10 +80,25 @@ class GeminiInferenceEngine(
             putJsonObject("generationConfig") {
                 put("temperature", config.temperature.toDouble()); put("topP", config.topP.toDouble()); put("maxOutputTokens", config.maxTokens)
                 if (config.customStopTokens.isNotEmpty()) putJsonArray("stopSequences") { config.customStopTokens.forEach { add(it) } }
-                if (config.enableThinking && CloudThinkingEffort.geminiSupportsThinkingLevel(model)) {
-                    putJsonObject("thinkingConfig") {
-                        put("thinkingLevel", CloudThinkingEffort.normalize(config.thinkingEffort))
-                        put("includeThoughts", true)
+                when (CloudThinkingEffort.geminiMode(model)) {
+                    CloudThinkingEffort.GeminiThinkingMode.NONE -> Unit
+                    CloudThinkingEffort.GeminiThinkingMode.LEVEL -> {
+                        val levels = CloudThinkingEffort.levelsForModel("cloud:gemini:$model")
+                        if (config.enableThinking || levels.isNotEmpty()) {
+                            putJsonObject("thinkingConfig") {
+                                put("thinkingLevel", CloudThinkingEffort.normalize(config.thinkingEffort, levels))
+                                put("includeThoughts", true)
+                            }
+                        }
+                    }
+                    CloudThinkingEffort.GeminiThinkingMode.BUDGET -> {
+                        putJsonObject("thinkingConfig") {
+                            put(
+                                "thinkingBudget",
+                                CloudThinkingEffort.geminiBudgetTokens(model, config.enableThinking, config.thinkingEffort)
+                            )
+                            put("includeThoughts", config.enableThinking)
+                        }
                     }
                 }
             }

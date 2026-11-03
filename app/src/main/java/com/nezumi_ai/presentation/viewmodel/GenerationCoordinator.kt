@@ -97,12 +97,21 @@ internal class GenerationCoordinator(
             currentHasMediaInput = hasMediaInput
             val modelAvailable = ModelFileManager.isModelAvailable(vm.appContext, engineModelName)
             Log.d(ChatViewModel.TAG, "generateAIResponse: model=$selectedModel engine=$engineModelName available=$modelAvailable")
-            if (!modelAvailable) {
-                val unavailableMsg = if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)) {
-                    vm.appContext.getString(R.string.cloud_model_unconfigured, selectedModel)
-                } else {
-                    vm.appContext.getString(R.string.selected_model_not_downloaded, selectedModel)
+            val isCloudSelected = com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)
+            if (isCloudSelected) {
+                val cloudBlock = vm.cloudUseBlockMessage(selectedModel)
+                if (cloudBlock != null) {
+                    Log.w(ChatViewModel.TAG, "generateAIResponse: cloud model blocked: $engineModelName")
+                    if (vm.modelLoadingOverlayDepth == 0) vm.clearModelLoadingIndicator()
+                    vm.messageRepository.addMessage(
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = cloudBlock
+                    )
+                    return
                 }
+            } else if (!modelAvailable) {
+                val unavailableMsg = vm.appContext.getString(R.string.selected_model_not_downloaded, selectedModel)
                 Log.w(ChatViewModel.TAG, "generateAIResponse: load not started, model unavailable: $engineModelName")
                 if (vm.modelLoadingOverlayDepth == 0) {
                     vm.clearModelLoadingIndicator()
@@ -117,11 +126,19 @@ internal class GenerationCoordinator(
             // GGUF メタデータの chat_template 確認 (isAlwaysOnThinkingModel 等) は
             // loadModelWithOverlay より前に走る。オーバーレイ無しだとユーザーにはフリーズに見えるため、
             // ロード時間表示をここで開始し、テンプレート確認フェーズを出す。
-            // (probeTemplate=false でも Thinking 判定で GGUF ヘッダ読みが発生し得る)
+            // クラウドは重みを載せず、ローカルモデルの解放が必要なときだけ画面を出す。
             val modelLoadStartMs = System.currentTimeMillis()
-            vm.beginModelPreparationIndicator(
-                vm.appContext.getString(R.string.model_loading_phase_template_scan)
-            )
+            val currentLoaded = manager.getCurrentModelName()
+            val releaseLocal = isCloudSelected && currentLoaded != null &&
+                !com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(currentLoaded)
+            if (!isCloudSelected || releaseLocal) {
+                vm.beginModelPreparationIndicator(
+                    vm.appContext.getString(
+                        if (releaseLocal) R.string.model_loading_phase_memory_release
+                        else R.string.model_loading_phase_template_scan
+                    )
+                )
+            }
             val baseConfig = vm.chatInferenceConfigForModel(selectedModel, probeTemplate = false)
             val backend = vm.settingsRepository.getBackendForModel(selectedModel)
             // Bug fix: LiteRT-LM 外部インポートモデル (.task / .litertlm) については、
@@ -291,6 +308,19 @@ internal class GenerationCoordinator(
                     vm._uiMessage.emit(
                         vm.appContext.getString(R.string.vm_model_audio_off, modelKindLabel)
                     )
+                    return
+                }
+            }
+            if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)) {
+                val media = com.nezumi_ai.data.inference.cloud.CloudMediaCapability.forModel(engineModelName)
+                if (images.isNotEmpty() && !media.image) {
+                    Log.w(ChatViewModel.TAG, "cloud: images sent but image capability off. count=${images.size}")
+                    vm._uiMessage.emit(vm.appContext.getString(R.string.vm_model_image_off, "Cloud"))
+                    return
+                }
+                if (audioClips.isNotEmpty() && !media.audio) {
+                    Log.w(ChatViewModel.TAG, "cloud: audio sent but audio capability off. count=${audioClips.size}")
+                    vm._uiMessage.emit(vm.appContext.getString(R.string.vm_model_audio_off, "Cloud"))
                     return
                 }
             }

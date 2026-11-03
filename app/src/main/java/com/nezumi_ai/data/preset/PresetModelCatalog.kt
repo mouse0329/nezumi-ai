@@ -64,6 +64,7 @@ object PresetModelCatalog {
         //  設定ページを先に確認させる方針)
         CloudUserModelRegistry.listForContext(context).forEach { modelId ->
             if (!CloudUserModelRegistry.isConfiguredForContext(context, modelId)) return@forEach
+            if (com.nezumi_ai.utils.CloudModelVisibility.isHidden(context, modelId)) return@forEach
             options += PresetModelOption(modelId, CloudModelId.displayLabel(modelId))
         }
         return options

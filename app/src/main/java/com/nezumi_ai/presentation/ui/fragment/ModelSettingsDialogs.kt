@@ -70,6 +70,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalUriHandler
 import com.nezumi_ai.data.inference.PromptTemplateStore
 import com.nezumi_ai.utils.GgufMetadataReader
+import com.nezumi_ai.utils.CloudModelVisibility
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.voicevox.VoicevoxManager
 import kotlinx.coroutines.Dispatchers
@@ -826,74 +827,142 @@ internal fun ModelSettingsFragment.ImportedModelSettingsDialog(model: ModelFileM
 }
 
 /**
- * 追加済みモデル一覧に並べるクラウドモデル 1 件分の行。
- * タップで編集モーダル、削除ボタンで登録解除。
+ * クラウドモデルをアクセスポイントごとにまとめた行。
+ * 切断と接続ダイアログは接続先単位。モデル行には画像・音声の対応を出す。
  */
-@Composable
-internal fun ModelSettingsFragment.CloudModelListItem(modelId: String) {
+internal data class CloudEndpointGroup(
+    val provider: CloudApiKeyStore.Provider,
+    val endpoint: String,
+    val modelIds: List<String>
+)
+
+internal fun ModelSettingsFragment.cloudEndpointGroups(): List<CloudEndpointGroup> {
     val context = requireContext()
-    val parsed = CloudModelId.parse(modelId)
-    val configured = CloudUserModelRegistry.isConfiguredForContext(context, modelId)
+    val models = CloudUserModelRegistry.listForContext(context)
+    return models.mapNotNull { id ->
+        val parsed = CloudModelId.parse(id) ?: return@mapNotNull null
+        val endpoint = CloudModelId.endpointOf(parsed.modelName)
+            ?: CloudApiKeyStore.getBaseUrlForContext(context, parsed.provider)
+        Triple(parsed.provider, endpoint.trim().trimEnd('/'), id)
+    }.groupBy { it.first to it.second }
+        .map { (key, rows) ->
+            CloudEndpointGroup(
+                provider = key.first,
+                endpoint = key.second,
+                modelIds = rows.map { it.third }.sortedBy { CloudModelId.bareModelName(CloudModelId.parse(it)?.modelName.orEmpty()) }
+            )
+        }
+        .sortedWith(compareBy({ it.provider.ordinal }, { it.endpoint }))
+}
+
+@Composable
+internal fun ModelSettingsFragment.CloudEndpointGroupItem(group: CloudEndpointGroup) {
+    val context = requireContext()
+    val configured = group.modelIds.any { CloudUserModelRegistry.isConfiguredForContext(context, it) }
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                val overrideKey = CloudUserModelRegistry.getOverrideApiKeyForContext(context, modelId)
-                val overrideUrl = CloudUserModelRegistry.getOverrideBaseUrlForContext(context, modelId)
-                cloudDialogState = CloudDialogState(
-                    editingModelId = modelId,
-                    provider = parsed?.provider ?: CloudApiKeyStore.Provider.LM_STUDIO,
-                    modelName = parsed?.modelName ?: "",
-                    apiKey = overrideKey,
-                    baseUrl = overrideUrl
-                )
-            },
-        colors = CardDefaults.cardColors(
-            containerColor = colorResource(id = R.color.surface_card)
-        )
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.surface_card))
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = CloudModelId.displayLabel(modelId),
-                    fontWeight = FontWeight.SemiBold,
-                    color = colorResource(id = R.color.text_primary)
-                )
-                ModelQuantTags(
-                    nameSource = parsed?.modelName ?: modelId,
-                    extraTags = listOf(stringResource(id = R.string.model_tag_cloud))
-                )
-                Text(
-                    text = stringResource(
-                        id = if (configured) R.string.cloud_models_status_configured
-                        else R.string.cloud_models_status_missing
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colorResource(
-                        id = if (configured) R.color.primary else R.color.text_secondary
-                    ),
-                    modifier = Modifier.padding(top = 2.dp)
-                )
-            }
-            TextButton(
-                onClick = {
-                    CloudUserModelRegistry.removeForContext(context, modelId)
-                    cloudModelsRevision++
-                }
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val endpointKey = CloudUserModelRegistry.endpointKey(group.endpoint)
+                        val ownKey = CloudStoresHolder.secure(context).get(endpointKey).orEmpty()
+                        val apiKey = ownKey.ifBlank { CloudApiKeyStore.getApiKeyForContext(context, group.provider) }
+                        cloudDialogState = CloudDialogState(
+                            provider = group.provider,
+                            apiKey = apiKey,
+                            baseUrl = group.endpoint
+                        )
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    stringResource(id = R.string.cloud_models_remove_button),
-                    fontSize = 12.sp
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = providerLabel(group.provider),
+                        fontWeight = FontWeight.SemiBold,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                    if (group.endpoint.isNotBlank()) {
+                        Text(
+                            text = group.endpoint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    Text(
+                        text = stringResource(id = R.string.cloud_models_endpoint_models, group.modelIds.size) +
+                            " · " + stringResource(
+                                id = if (configured) R.string.cloud_models_status_configured
+                                else R.string.cloud_models_status_missing
+                            ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = if (configured) R.color.primary else R.color.text_secondary),
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        CloudModelSync.disconnectForContext(context, group.provider, group.endpoint)
+                        cloudModelsRevision++
+                    }
+                ) {
+                    Text(stringResource(id = R.string.cloud_models_disconnect_button), fontSize = 12.sp)
+                }
+            }
+            group.modelIds.forEach { modelId ->
+                val media = CloudMediaCapability.forModel(modelId)
+                val hidden = CloudModelVisibility.isHidden(context, modelId)
+                val tags = buildList {
+                    add(stringResource(id = R.string.model_tag_cloud))
+                    if (media.image) add(stringResource(id = R.string.cloud_models_tag_image))
+                    if (media.audio) add(stringResource(id = R.string.cloud_models_tag_audio))
+                    if (hidden) add(stringResource(id = R.string.cloud_models_hidden_tag))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = CloudModelId.bareModelName(CloudModelId.parse(modelId)?.modelName.orEmpty()),
+                            color = colorResource(id = if (hidden) R.color.text_secondary else R.color.text_primary),
+                            fontSize = 14.sp
+                        )
+                        ModelQuantTags(nameSource = CloudModelId.parse(modelId)?.modelName ?: modelId, extraTags = tags)
+                    }
+                    TextButton(
+                        onClick = {
+                            CloudModelVisibility.setHidden(context, modelId, !hidden)
+                            cloudModelsRevision++
+                        }
+                    ) {
+                        Text(
+                            stringResource(
+                                id = if (hidden) R.string.cloud_models_unhide_button
+                                else R.string.cloud_models_hide_button
+                            ),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
             }
         }
     }
+}
+
+/** 追加済みモデル一覧に並べるクラウドモデル 1 件分の行。接続先まとめに置き換えた。 */
+@Composable
+internal fun ModelSettingsFragment.CloudModelListItem(modelId: String) {
+    val parsed = CloudModelId.parse(modelId) ?: return
+    val endpoint = CloudModelId.endpointOf(parsed.modelName)
+        ?: CloudApiKeyStore.getBaseUrlForContext(requireContext(), parsed.provider)
+    CloudEndpointGroupItem(CloudEndpointGroup(parsed.provider, endpoint, listOf(modelId)))
 }
 
 @Composable
@@ -927,19 +996,7 @@ internal fun ModelSettingsFragment.CloudModelDialogHost() {
         CloudModelDialog(
             state = dialogState,
             onDismiss = { cloudDialogState = null },
-            onSave = { saved ->
-                val isNew = saved.editingModelId == null
-                val modelId = saved.editingModelId
-                    ?: CloudModelId.build(saved.provider, saved.modelName)
-
-                // 編集でプロバイダ/モデル名が変わった場合は古い登録を消して新しい ID で登録する。
-                if (!isNew && saved.editingModelId != modelId) {
-                    CloudUserModelRegistry.removeForContext(context, saved.editingModelId)
-                }
-                CloudUserModelRegistry.addForContext(context, modelId)
-                CloudUserModelRegistry.saveOverrideForContext(context, modelId, saved.apiKey, saved.baseUrl)
-
-                toast(getString(R.string.cloud_models_credentials_saved))
+            onConnected = {
                 cloudModelsRevision++
                 cloudDialogState = null
             }
@@ -950,17 +1007,14 @@ internal fun ModelSettingsFragment.CloudModelDialogHost() {
 /**
  * クラウドモデルの追加/編集モーダル。
  *
- * - プロバイダーはドロップダウンで選択。選んだプロバイダーに応じて入力項目を出し分ける。
- * - ローカル系 (LM Studio / Ollama ローカル) はモデル選択と URL のみ (API キー不要)。
- *   モデル名は `/v1/models` から取得した一覧をドロップダウンで選ぶ。
- * - クラウド系 (Ollama クラウドを含む) はモデル名を自由入力。API キーとアクセスポイントを設定できる。
- *   Ollama クラウドはモデル一覧を `/api/tags` から API キー付きで取得できる。
+ * API キーはプロバイダにつき一つ。接続すると使えるモデルをすべて追加する。
+ * Ollama ローカルと LM Studio は接続先を複数登録できる。
  */
 @Composable
 internal fun ModelSettingsFragment.CloudModelDialog(
     state: CloudDialogState,
     onDismiss: () -> Unit,
-    onSave: (CloudDialogState) -> Unit
+    onConnected: () -> Unit
 ) {
     // Ollama クラウド (旧称リモート) はリモートサーバーではなく ollama.com の
     // クラウドサービスなので、他のクラウドプロバイダと同じく API キー必須として扱う。
@@ -1083,102 +1137,11 @@ internal fun ModelSettingsFragment.CloudModelDialog(
                     }
                 }
 
-                // モデル名
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.cloud_models_model_name_label),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                        if (isLocalProvider || state.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE) {
-                            TextButton(
-                                onClick = {
-                                    cloudDialogState = state.copy(fetchingModels = true)
-                                    viewLifecycleOwner.lifecycleScope.launch {
-                                        val baseUrl = state.baseUrl.ifBlank {
-                                            state.provider.defaultBaseUrl.orEmpty()
-                                        }
-                                        val models = LocalModelListFetcher.fetch(
-                                            provider = state.provider,
-                                            baseUrl = baseUrl,
-                                            apiKey = state.apiKey
-                                        )
-                                        cloudDialogState = cloudDialogState?.copy(
-                                            fetchedModels = models,
-                                            fetchingModels = false,
-                                            errorMessage = if (models.isEmpty()) {
-                                                getString(R.string.cloud_models_fetch_models_empty)
-                                            } else null
-                                        )
-                                    }
-                                }
-                            ) {
-                                Text(
-                                    text = stringResource(
-                                        id = if (state.fetchingModels) R.string.cloud_models_fetch_models_loading
-                                        else R.string.cloud_models_fetch_models
-                                    ),
-                                    fontSize = 12.sp
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    val canPickFromFetched = isLocalProvider || state.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE
-                    if (canPickFromFetched && state.fetchedModels.isNotEmpty()) {
-                        // 取得できた一覧をドロップダウンで選ぶ
-                        ExposedDropdownMenuBox(
-                            expanded = state.modelDropdownExpanded,
-                            onExpandedChange = {
-                                cloudDialogState = state.copy(modelDropdownExpanded = it)
-                            }
-                        ) {
-                            OutlinedTextField(
-                                value = state.modelName,
-                                onValueChange = { cloudDialogState = state.copy(modelName = it) },
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = state.modelDropdownExpanded)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor()
-                            )
-                            ExposedDropdownMenu(
-                                expanded = state.modelDropdownExpanded,
-                                onDismissRequest = {
-                                    cloudDialogState = state.copy(modelDropdownExpanded = false)
-                                }
-                            ) {
-                                state.fetchedModels.forEach { modelName ->
-                                    DropdownMenuItem(
-                                        text = { Text(modelName) },
-                                        onClick = {
-                                            cloudDialogState = state.copy(
-                                                modelName = modelName,
-                                                modelDropdownExpanded = false
-                                            )
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        OutlinedTextField(
-                            value = state.modelName,
-                            onValueChange = { cloudDialogState = state.copy(modelName = it) },
-                            placeholder = {
-                                Text(modelNameHint(state.provider))
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
+                Text(
+                    text = stringResource(id = R.string.cloud_models_sync_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
 
                 // エラーメッセージ
                 state.errorMessage?.let { message ->
@@ -1192,34 +1155,49 @@ internal fun ModelSettingsFragment.CloudModelDialog(
         },
         confirmButton = {
             Button(
+                enabled = !state.fetchingModels,
                 onClick = {
-                    val modelName = state.modelName.trim()
-                    if (modelName.isEmpty()) {
-                        cloudDialogState = state.copy(
-                            errorMessage = getString(R.string.cloud_models_add_failed_blank)
-                        )
-                        return@Button
-                    }
-                    if (requiresApiKey && state.apiKey.isBlank()) {
-                        cloudDialogState = state.copy(
-                            errorMessage = getString(R.string.cloud_models_add_failed_not_configured)
-                        )
-                        return@Button
-                    }
                     val resolvedUrl = state.baseUrl.ifBlank { state.provider.defaultBaseUrl.orEmpty() }
-                    if ((isLocalProvider || state.provider.defaultBaseUrl == null) && !(resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
+                    if (!(resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
                         cloudDialogState = state.copy(
                             errorMessage = getString(R.string.cloud_models_base_url_required_hint)
                         )
                         return@Button
                     }
-                    onSave(state.copy(modelName = modelName, baseUrl = resolvedUrl))
+                    if (requiresApiKey && state.apiKey.isBlank() &&
+                        CloudApiKeyStore.getApiKeyForContext(requireContext(), state.provider).isBlank()
+                    ) {
+                        cloudDialogState = state.copy(
+                            errorMessage = getString(R.string.cloud_models_add_failed_not_configured)
+                        )
+                        return@Button
+                    }
+                    cloudDialogState = state.copy(fetchingModels = true, errorMessage = null, baseUrl = resolvedUrl)
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val count = withContext(Dispatchers.IO) {
+                            CloudModelSync.connectForContext(
+                                requireContext(),
+                                state.provider,
+                                resolvedUrl,
+                                state.apiKey
+                            )
+                        }
+                        if (count < 0) {
+                            cloudDialogState = cloudDialogState?.copy(
+                                fetchingModels = false,
+                                errorMessage = getString(R.string.cloud_models_fetch_models_empty)
+                            )
+                        } else {
+                            toast(getString(R.string.cloud_models_synced, count))
+                            onConnected()
+                        }
+                    }
                 }
             ) {
                 Text(
                     stringResource(
-                        id = if (state.editingModelId == null) R.string.cloud_models_add_button
-                        else R.string.cloud_models_save_button
+                        id = if (state.fetchingModels) R.string.cloud_models_fetch_models_loading
+                        else R.string.cloud_models_connect_button
                     )
                 )
             }

@@ -134,7 +134,7 @@ class ModelManager(
     private fun engineModelName(modelName: String): String {
         if (!CloudModelId.isCloud(modelName)) return modelName
         val parsed = CloudModelId.parse(modelName) ?: return modelName
-        return parsed.modelName
+        return CloudModelId.bareModelName(parsed.modelName)
     }
 
     /**
@@ -378,7 +378,7 @@ class ModelManager(
                 val memStatus = memoryObserver.getMemoryStatus(context)
                 Log.d(TAG, "INIT_MODEL_MEMORY_STATUS: level=${memStatus.level} used=${memStatus.usedMB}MB max=${memStatus.maxMB}MB percent=${memStatus.usedPercent}% device_low=${memStatus.isLowMemory}")
                 
-                if (!isMemorySufficient()) {
+                if (!isMemorySufficient() && !targetEngine.isCloudEngine()) {
                     val errorMsg = "Cannot load model - memory usage is too high (${getMemoryUsagePercent()}% - ${memStatus.usedMB}/${memStatus.maxMB}MB)"
                     Log.e(TAG, "INIT_MODEL_MEMORY_INSUFFICIENT: $errorMsg")
                     val memError = RuntimeException(errorMsg)
@@ -391,12 +391,19 @@ class ModelManager(
                     return Result.failure(memError)
                 }
                 
-                // 前のモデルをアンロード（エンジン切替時も明示）
-                // エンジン切り替え時はマルチモーダルプロジェクターとLLMを強制停止してから切り替える。
-                // 生成中のネイティブループや mmproj が残っていると、次エンジンのロードで
-                // メモリ競合・クラッシュ・不正な KV/vision 状態が起きるため、
-                // cancel → (interrupt) → unload を確実に実行する。
-                if (currentModelName != null || activeEngine !== targetEngine) {
+                val previousName = currentModelName
+                val releasingLocal = previousName != null && !CloudModelId.isCloud(previousName)
+                // クラウドは重みを載せない。ロード画面とプロセス停止が要るのは、
+                // ローカルモデルがメモリに載っていてそれを解放するときだけ。
+                if (targetEngine.isCloudEngine() && !releasingLocal) {
+                    if (previousName != null && previousName != modelName) {
+                        Log.d(TAG, "Switching cloud model without local release: $previousName -> $modelName")
+                        runCatching { activeEngine.cancelInference() }
+                            .onFailure { Log.w(TAG, "cancelInference failed", it) }
+                        runCatching { activeEngine.unloadModel() }
+                            .onFailure { Log.w(TAG, "unloadModel failed", it) }
+                    }
+                } else if (previousName != null || activeEngine !== targetEngine) {
                     val previousEngine = activeEngine
                     val switchingEngine = previousEngine !== targetEngine
                     val modelChanged = currentModelName != null && currentModelName != modelName
@@ -466,7 +473,7 @@ class ModelManager(
                 }
                 
                 // 前モデルの解放が終わったら、ロード開始のステータスに戻す。
-                notifyLoadPhase("weights")
+                if (!targetEngine.isCloudEngine()) notifyLoadPhase("weights")
                 // 新しいモデルをロード
                 // クラウドの場合は `cloud:...` プレフィックスを剥いでエンジンに渡す。
                 val engineModel = engineModelName(modelName)

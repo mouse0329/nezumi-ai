@@ -82,6 +82,9 @@
     <string name="thinking_effort_low">低</string>
     <string name="thinking_effort_medium">中</string>
     <string name="thinking_effort_high">高</string>
+    <string name="thinking_effort_minimal">最小</string>
+    <string name="thinking_effort_max">最大</string>
+    <string name="thinking_effort_xhigh">最高</string>
     <string name="scroll_to_bottom">一番下へ</string>
     <string name="scroll_to_bottom_icon"></string>
     <string name="revoke_prompt">取り消し</string>
@@ -1052,9 +1055,9 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_settings_local_import_button">モデルファイルを追加</string>
     <string name="model_settings_sd_zip_import_title">SD モデル zip をインポート</string>
     <!-- クラウドモデル (モデル管理画面に統合) -->
-    <string name="cloud_models_entry_button">クラウドモデルを追加</string>
+    <string name="cloud_models_entry_button">接続を追加</string>
     <string name="cloud_models_screen_title">クラウドモデル</string>
-    <string name="cloud_models_screen_description">Claude / Gemini / ChatGPT / Ollama / LM Studio のモデルを追加すると、プリセットから選択できるようになります。API キーは Android Keystore で暗号化保存されます。</string>
+    <string name="cloud_models_screen_description">API キーはプロバイダにつき一つです。接続すると使えるモデルをすべて追加します。Ollama ローカルと LM Studio は接続先を複数登録できます。</string>
     <string name="cloud_models_provider_claude">Claude (Anthropic)</string>
     <string name="cloud_models_provider_gemini">Gemini (Google)</string>
     <string name="cloud_models_provider_openai">ChatGPT (OpenAI)</string>
@@ -1071,8 +1074,8 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="cloud_models_remove_button">削除</string>
     <string name="cloud_models_add_failed_not_configured">先に API キー / Base URL を設定してください</string>
     <string name="cloud_models_add_failed_blank">モデル名を入力してください</string>
-    <string name="cloud_models_add_dialog_title_add">クラウドモデルを追加</string>
-    <string name="cloud_models_add_dialog_title_edit">クラウドモデル設定</string>
+    <string name="cloud_models_add_dialog_title_add">モデル接続を追加</string>
+    <string name="cloud_models_add_dialog_title_edit">モデル接続</string>
     <string name="cloud_models_provider_label">プロバイダー</string>
     <string name="cloud_models_model_name_label">モデル名</string>
     <string name="cloud_models_model_name_hint_claude">例: claude-sonnet-4-5, claude-3-5-haiku-latest</string>
@@ -1082,12 +1085,22 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="cloud_models_model_name_hint_lmstudio">例: LM Studio 側でロード中のモデル名</string>
     <string name="cloud_models_fetch_models">モデル一覧を取得</string>
     <string name="cloud_models_fetch_models_loading">取得中…</string>
-    <string name="cloud_models_fetch_models_empty">モデル一覧を取得できませんでした。サーバーが起動しているか確認してください。</string>
+    <string name="cloud_models_fetch_models_empty">モデル一覧を取得できませんでした。API キーと接続先を確認してください。</string>
+    <string name="cloud_models_synced">%1$d 件のモデルを追加しました</string>
+    <string name="cloud_models_connect_button">接続してモデルを取得</string>
+    <string name="cloud_models_disconnect_button">切断</string>
+    <string name="cloud_models_sync_hint">キーはプロバイダにつき一つです。使えるモデルはすべて追加されます。Ollama ローカルと LM Studio だけ、接続先を複数登録できます。</string>
     <string name="cloud_models_credentials_saved">設定を保存しました</string>
     <string name="cloud_models_credentials_save_failed">保存に失敗しました</string>
     <string name="cloud_models_status_configured">設定済み</string>
     <string name="cloud_models_status_missing">未設定</string>
     <string name="model_tag_cloud">Cloud</string>
+    <string name="cloud_models_endpoint_models">%1$d 件</string>
+    <string name="cloud_models_tag_image">画像</string>
+    <string name="cloud_models_tag_audio">音声</string>
+    <string name="cloud_models_hide_button">非表示</string>
+    <string name="cloud_models_unhide_button">表示</string>
+    <string name="cloud_models_hidden_tag">非表示中</string>
     <string name="cloud_models_empty">クラウドモデルはまだ追加されていません。</string>
     <!-- デフォルトプリセットのモデル未選択モーダル -->
     <string name="default_model_missing_title">モデルが選択されていません</string>
@@ -1717,6 +1730,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="cloud_model_unconfigured_preset">プリセットのクラウドモデル(%1$s)の API キーまたは接続先が未設定です</string>
     <string name="preset_model_not_downloaded">プリセットのモデル(%1$s)が未ダウンロードです</string>
     <string name="cloud_model_unconfigured">クラウドモデル(%1$s)の API キーまたは接続先が未設定です。設定画面で構成してください。</string>
+    <string name="cloud_model_unavailable">このモデルは使えません（%1$s）</string>
     <string name="selected_model_not_downloaded">選択モデル(%1$s)が未ダウンロードです。設定画面でダウンロードしてください。</string>
     <string name="web_model_unsupported">このモデルはWeb用です。AndroidアプリではWeb用モデルは使用できません。本体デバイス用の.taskファイルをお使いください。</string>
     <string name="model_error_path_with_msg">%1$s\nパス: %2$s</string>

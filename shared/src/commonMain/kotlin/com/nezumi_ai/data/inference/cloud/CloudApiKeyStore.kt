@@ -51,6 +51,11 @@ object CloudApiKeyStore {
         return ok
     }
 
+    fun hasSavedBaseUrl(store: PlatformSecureStore, provider: Provider): Boolean {
+        if (!store.isAvailable) return false
+        return store.get(KEY_PREFIX_BASE_URL + provider.id)?.isNotBlank() == true
+    }
+
     fun getBaseUrl(store: PlatformSecureStore, provider: Provider): String {
         val saved = if (store.isAvailable) store.get(KEY_PREFIX_BASE_URL + provider.id) else null
         val resolved = saved?.takeIf { it.isNotBlank() } ?: provider.defaultBaseUrl
