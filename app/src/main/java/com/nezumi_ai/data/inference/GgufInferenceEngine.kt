@@ -1188,8 +1188,11 @@ class GgufInferenceEngine(
                 //   無く、モデルが <tool_response> を自分で再生成して本物の結果を無視していた。
                 //   toolCallTurnText() で assistant ターン終端 (+ Gemma4 では user ターン開始) を
                 //   明示してから <tool_response> を連結する。
+                // 次ラウンド用プロンプトは「これまでの全履歴 + 今回の assistant ターン終端 + tool_response」を積む。
+                // 以前は毎回 original prompt から作り直していたため、2 周目以降で前のツール結果が消えて
+                // モデルがツールを続けられず 1 回で止まって見えていた。
                 currentPrompt = buildString {
-                    append(prompt)
+                    append(currentPrompt)
                     append(
                         GgufToolCallParser.toolCallTurnText(
                             Gemma4ThinkingParser.stripThinkingForModelPrompt(normalizedRoundText),

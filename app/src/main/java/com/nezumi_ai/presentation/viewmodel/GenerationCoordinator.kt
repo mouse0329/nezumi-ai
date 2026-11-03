@@ -616,6 +616,7 @@ internal class GenerationCoordinator(
                                     val toolResults = InferenceStreamProtocol.decodeToolResults(seg)
                                     val tpsValue = InferenceStreamProtocol.decodeTps(seg)
                                     val mediaProgress = InferenceStreamProtocol.decodeMediaProgress(seg)
+                                    val toolRoundLimit = InferenceStreamProtocol.decodeToolRoundLimit(seg)
 
                                     when {
                                         mediaProgress != null -> {
@@ -754,6 +755,15 @@ internal class GenerationCoordinator(
                                             if (!isCloudStreamModel) {
                                                 vm._currentTps.value = tpsValue
                                             }
+                                        }
+                                        toolRoundLimit != null -> {
+                                            // ツール周回上限到達。DB 安全なマーカーを本文に残し、UI が通知を出せるようにする。
+                                            // null バイト付きの制御マーカーは SQLite TEXT で切れるため、ここでは安全な content marker を積む。
+                                            val marker = InferenceStreamProtocol.contentMarkerForToolRoundLimit(toolRoundLimit)
+                                            if (marker !in answerBuilder) {
+                                                answerBuilder.append(marker)
+                                            }
+                                            Log.d(ChatViewModel.TAG, "Tool round limit reached: $toolRoundLimit")
                                         }
                                         else -> {
                                             val executedToolsList = InferenceStreamProtocol.decodeExecutedToolsList(seg)

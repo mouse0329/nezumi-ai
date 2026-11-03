@@ -10,8 +10,8 @@ object InferenceStreamProtocol {
     private const val TPS_PREFIX = "\u0000__TPS__\u0000"
     /** ツール周回上限到達。payload は上限回数の整数。本文には CONTENT_MARKER を残す。 */
     private const val TOOL_ROUND_LIMIT_PREFIX = "\u0000__TOOL_ROUND_LIMIT__\u0000"
-    /** 保存済みメッセージ content に埋め込む表示用マーカー（UI で除去）。 */
-    const val TOOL_ROUND_LIMIT_CONTENT_MARKER_PREFIX = "\u0000__TOOL_ROUND_LIMIT__\u0000"
+    /** 保存済みメッセージ content に埋め込む表示用マーカー（UI で除去）。null バイトを含まない（SQLite TEXT が \u0000 で切れるため）。 */
+    const val TOOL_ROUND_LIMIT_CONTENT_MARKER_PREFIX = "\u0001__TOOL_ROUND_LIMIT__\u0001"
 
     fun encodeFinal(fullText: String): String = FINAL_PREFIX + fullText
 
@@ -92,7 +92,7 @@ object InferenceStreamProtocol {
         if (content.isEmpty() || TOOL_ROUND_LIMIT_CONTENT_MARKER_PREFIX !in content) {
             return content to null
         }
-        val regex = Regex("\u0000__TOOL_ROUND_LIMIT__\u0000(\\d+)")
+        val regex = Regex("\u0001__TOOL_ROUND_LIMIT__\u0001(\\d+)")
         val match = regex.find(content)
         val maxRounds = match?.groupValues?.getOrNull(1)?.toIntOrNull()
         val stripped = content.replace(regex, "").trimEnd()
