@@ -1,12 +1,19 @@
 package com.nezumi_ai.presentation.viewmodel.usecase
 
+import android.content.Context
+import com.nezumi_ai.data.inference.cloud.CloudModelId
 import com.nezumi_ai.data.inference.remote.RemoteEngineProcessDiedException
+import com.nezumi_ai.data.preset.PresetConstants
+import java.io.File
 
 /**
  * クラスタ E (モデル/エンジン管理) のうち、純粋ロジック部分を切り出したコーディネータ。
  *
- * モデルロード失敗時のエラー分類は、UI 表示文言の決定とファイル削除可否の判断に使われる
- * 重要な分岐であり、ViewModel から独立してテスト可能にするためにここへ集約する。
+ * - ロード失敗時のエラー分類
+ * - モデル ID / GGUF パスの正規化
+ * - エンジン向けモデル名への変換
+ *
+ * ViewModel は State / オーバーレイ / Repository 呼び出しに専念し、判定と文字列変換はここに寄せる。
  */
 object ModelSessionCoordinator {
 
@@ -88,4 +95,129 @@ object ModelSessionCoordinator {
 
     fun isGgufEngineModel(engineModelName: String): Boolean =
         engineModelName.lowercase().endsWith(".gguf")
+
+    /**
+     * プリセットの modelId を設定系で使うモデルキーへ写す。
+     * クラウド ID はそのまま。不明なビルトインは null（呼び出し側でフォールバック）。
+     */
+    fun mapPresetModelIdToSettingsModel(modelId: String): String? {
+        if (CloudModelId.isCloud(modelId)) {
+            return modelId
+        }
+        return when (modelId) {
+            PresetConstants.MODEL_GEMMA4_LITERT -> "Gemma4-2B"
+            PresetConstants.MODEL_QWEN3_GGUF -> null
+            else -> modelId.takeIf { it.isNotBlank() }
+        }
+    }
+
+    /**
+     * GGUF モデル ID を実在する絶対パスに解決する。
+     * - すでに絶対パスで存在すればそれを返す
+     * - ファイル名だけ・相対・表記ゆれの場合は imported ディレクトリから同名を探す
+     * 見つからなければ null。
+     */
+    fun resolveGgufModelPath(context: Context, model: String): String? {
+        val trimmed = model.trim()
+        if (!trimmed.lowercase().endsWith(".gguf")) return null
+        val direct = File(trimmed)
+        if (direct.isAbsolute && direct.isFile && direct.canRead()) {
+            return direct.absolutePath
+        }
+        val name = direct.name
+        if (name.isBlank()) return null
+        val importedDir = File(context.filesDir, "models/imported")
+        val candidates = importedDir.listFiles()?.filter { file ->
+            file.isFile && file.name.equals(name, ignoreCase = true)
+        }.orEmpty()
+        return candidates.firstOrNull()?.absolutePath
+    }
+
+    /**
+     * UI / 設定で使うモデル表記を正規化する。
+     * クラウド ID と GGUF 絶対パスはそのまま（または imported 解決）。
+     */
+    fun normalizeModel(context: Context, model: String): String {
+        val trimmed = model.trim()
+        val lowered = trimmed.lowercase()
+        // クラウドモデル ID (`cloud:...` / レガシー gemini_api / claude_api) はそのまま通す。
+        // 以前は else 分岐で "Gemma4-2B" に潰されてしまい、プリセットでクラウドを選んでも
+        // ローカル Gemma4-2B が動くバグの原因だった。
+        if (CloudModelId.isCloud(trimmed)) {
+            return trimmed
+        }
+        // GGUF は絶対パスが ID。表記ゆれやファイル名のみの場合でも imported から解決する。
+        val resolvedGguf = resolveGgufModelPath(context, trimmed)
+        if (resolvedGguf != null) return resolvedGguf
+
+        val isLocalTaskPath =
+            (lowered.endsWith(".task") || lowered.endsWith(".litertlm")) &&
+                File(trimmed).isAbsolute
+
+        return when {
+            trimmed.equals("Gemma4-4B", ignoreCase = true) -> "Gemma4-4B"
+            trimmed.equals("Gemma4-2B", ignoreCase = true) -> "Gemma4-2B"
+            trimmed.equals("Gemma3n-4B", ignoreCase = true) -> "E4B"
+            trimmed.equals("Gemma3n-2B", ignoreCase = true) -> "E2B"
+            trimmed.equals("E4B", ignoreCase = true) -> "E4B"
+            trimmed.equals("E2B", ignoreCase = true) -> "E2B"
+            isLocalTaskPath -> trimmed
+            else -> "Gemma4-2B"
+        }
+    }
+
+    /**
+     * ModelManager / エンジンに渡すモデル名へ変換する。
+     * `cloud:...` は剥がさない。GGUF は絶対パスのまま。
+     */
+    fun toEngineModelName(context: Context, model: String): String {
+        val normalized = normalizeModel(context, model)
+        if (CloudModelId.isCloud(normalized)) {
+            return normalized
+        }
+        if (normalized.lowercase().endsWith(".gguf") && File(normalized).isAbsolute) {
+            return normalized
+        }
+        return when {
+            normalized.equals("Gemma4-4B", ignoreCase = true) -> "gemma4-4b"
+            normalized.equals("Gemma4-2B", ignoreCase = true) -> "gemma4-2b"
+            normalized.equals("E4B", ignoreCase = true) -> "gemma-3n-4b"
+            normalized.equals("E2B", ignoreCase = true) -> "gemma-3n-2b"
+            (normalized.endsWith(".task") ||
+                normalized.endsWith(".litertlm")) && File(normalized).isAbsolute -> normalized
+            else -> "gemma4-2b"
+        }
+    }
+
+    /** 既知ビルトインの概算サイズ。ファイルが存在すれば実サイズを優先。 */
+    fun getEngineModelSizeBytes(engineModelName: String): Long? {
+        val lowerName = engineModelName.lowercase()
+        if (File(engineModelName).exists()) {
+            return File(engineModelName).length()
+        }
+        return when (lowerName) {
+            "gemma4-4b", "gemma-4-4b.litertlm" -> 4_800_000_000L
+            "gemma4-2b", "gemma-4-2b.litertlm" -> 2_400_000_000L
+            "gemma-3n-4b", "gemma-3n-4b.task" -> 4_000_000_000L
+            "gemma-3n-2b", "gemma-3n-2b.task" -> 2_000_000_000L
+            else -> null
+        }
+    }
+
+    /** モデルエラーダイアログ本文の組み立て（純文字列）。 */
+    fun formatModelErrorDialogMessage(
+        title: String,
+        message: String,
+        details: String? = null
+    ): String {
+        return buildString {
+            append(title)
+            append("\n\n")
+            append(message)
+            details?.takeIf { it.isNotBlank() }?.let {
+                append("\n\n")
+                append(it)
+            }
+        }
+    }
 }

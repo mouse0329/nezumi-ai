@@ -5,6 +5,8 @@ import android.util.Log
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.ToolPayloadSanitizer
+import com.nezumi_ai.data.inference.ToolCallTags
+import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.prompt.ConversationInput
 import com.nezumi_ai.data.inference.prompt.ConversationTurn
 import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
@@ -414,6 +416,71 @@ class PromptBuildingUseCase {
         if (effortLevel.trim().lowercase() != "low") return prompt
         if (prompt.contains(REASONING_EFFORT_LOW_MARKER)) return prompt
         return prompt.trimEnd() + "\n\n" + REASONING_EFFORT_LOW_MARKER
+    }
+
+
+    // ---- ストリーミング表示用のツールカード復元 (ChatViewModel から移管) ----
+
+    /** ストリーム途中テキストにツール呼び出しマークアップが含まれるか。 */
+    fun hasStreamingToolCallMarkup(text: String): Boolean {
+        val n = ToolCallTags.normalizeFullwidthToolTagDelimiters(text)
+        return ToolCallTags.TOOL_CALL_OPEN in n ||
+            ToolCallTags.GEMMA4_TOOL_CALL_OPEN in n ||
+            n.contains("<function", ignoreCase = true)
+    }
+
+    /**
+     * ネイティブ partial パーサーが content="" を返したとき、生の累積テキストから
+     * インラインツールカード用の本文を復元する。思考ブロックは除き、未完の
+     * `<tool_call>` は残す。
+     */
+    fun restoreStreamingContentForToolCards(
+        engineModelName: String,
+        rawAnswer: String
+    ): String {
+        val rawAccumulated = Gemma4ThinkingParser.sanitizeVisibleText(
+            stripThinkSectionsForDisplay(rawAnswer),
+            preserveToolCallTags = true
+        )
+        if (rawAccumulated.isBlank()) return ""
+        if (hasStreamingToolCallMarkup(rawAccumulated)) {
+            return sanitizeAssistantOutputForModel(engineModelName, rawAccumulated)
+        }
+        val visibleOutsideToolBlocks = rawAccumulated
+            .replace(Regex("(?s)<tool_call>.*?</tool_call>"), "")
+            .replace(Regex("(?s)<tool_response>.*?</tool_response>"), "")
+            .substringBefore("<tool_call>")
+            .trim()
+        return if (visibleOutsideToolBlocks.isNotEmpty()) {
+            sanitizeAssistantOutputForModel(engineModelName, rawAccumulated)
+        } else {
+            ""
+        }
+    }
+
+
+    /**
+     * ユーザー停止時に toolResultsJson へ user_stop カードを付与する。
+     * @param stopMessage UI 表示文言 (R.string.vm_user_stopped_generation 等)
+     */
+    fun withUserStopCard(toolResultsJson: String?, stopMessage: String): String {
+        val existingCards = if (!toolResultsJson.isNullOrBlank() && toolResultsJson != "[]") {
+            ToolResultCard.listFromJsonArray(toolResultsJson)
+        } else {
+            emptyList()
+        }
+        if (existingCards.any { it.toolName == "user_stop" }) {
+            return ToolResultCard.listToJsonArray(existingCards)
+        }
+        val stopCard = ToolResultCard(
+            toolName = "user_stop",
+            success = true,
+            payload = mapOf(
+                "message" to kotlinx.serialization.json.JsonPrimitive(stopMessage),
+                "icon" to kotlinx.serialization.json.JsonPrimitive("")
+            )
+        )
+        return ToolResultCard.listToJsonArray(existingCards + stopCard)
     }
 
     // ---- モデル名判定 (ModelNameHeuristics への委譲。旧 PromptBuilder 呼び出しの移行先) ----

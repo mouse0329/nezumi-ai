@@ -76,6 +76,8 @@ import com.nezumi_ai.presentation.viewmodel.usecase.ChatSessionCoordinator
 import com.nezumi_ai.presentation.viewmodel.usecase.ImageToolInvoker
 import com.nezumi_ai.presentation.viewmodel.usecase.ModelSessionCoordinator
 import com.nezumi_ai.presentation.viewmodel.usecase.PromptBuildingUseCase
+import com.nezumi_ai.presentation.viewmodel.usecase.ContextMeterCalculator
+import com.nezumi_ai.presentation.viewmodel.usecase.MemoryInjectionCoordinator
 import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.sd.SdScheduler
@@ -151,10 +153,10 @@ data class ImageGenConfirmationResult(
 )
 
 class ChatViewModel(
-    private val appContext: Context,
+    internal val appContext: Context,
     private val sessionRepository: ChatSessionRepository,
-    private val messageRepository: MessageRepository,
-    private val settingsRepository: SettingsRepository,
+    internal val messageRepository: MessageRepository,
+    internal val settingsRepository: SettingsRepository,
     private val presetRepository: PresetRepository? = null,
     private val memoryRepository: MemoryRepository? = null
 ) : ViewModel() {
@@ -182,24 +184,25 @@ class ChatViewModel(
         AndroidPlatformSdModelPathResolver(appContext)
     }
     private val promptBuilding = PromptBuildingUseCase()
+    private val contextMeter = ContextMeterCalculator(promptBuilding)
     private val chatSessionCoordinator by lazy { ChatSessionCoordinator(sessionRepository) }
     private val imageToolInvoker by lazy { ImageToolInvoker(sdModelPathResolver) }
 
     companion object {
-        private const val TAG = "ChatViewModel"
-        private const val RESPONSE_TIMEOUT_MS = 120_000L
+        internal const val TAG = "ChatViewModel"
+        internal const val RESPONSE_TIMEOUT_MS = 120_000L
         /** ストリーム中の Room 更新間隔（デバウンス: トークン毎のフル更新を間引く） */
-        private const val STREAM_PERSIST_INTERVAL_MS = 120L
-        private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 100L
+        internal const val STREAM_PERSIST_INTERVAL_MS = 120L
+        internal const val STREAM_PERSIST_INTERVAL_TABLE_MS = 100L
         /** 定期 persist は本文がこの文字数以上増えたときだけ行う（時間条件の補助） */
-        private const val STREAM_PERSIST_MIN_CHARS = 16
+        internal const val STREAM_PERSIST_MIN_CHARS = 16
         /** Phase 14: トークン数と文字数の変換比率（1トークン ≈ 3.5～4文字）*/
         private const val TOKEN_TO_CHAR_RATIO = 4
         /** 1 回の生成の上限（ネイティブが onDone を返さない場合の保険） */
-        private const val GENERATION_WALL_TIMEOUT_MS = 900_000L
+        internal const val GENERATION_WALL_TIMEOUT_MS = 900_000L
         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
-        private const val GENERATION_STALL_TIMEOUT_MS = 180_000L
-        private const val GENERATION_STALL_CHECK_MS = 5_000L
+        internal const val GENERATION_STALL_TIMEOUT_MS = 180_000L
+        internal const val GENERATION_STALL_CHECK_MS = 5_000L
         // バグ修正 (#binder-thread-pool-starvation): estimateContextUsageChars の
         // 最小起動間隔。これより短い間隔で _messages Flow が再emitされても、
         // 同期 Binder 呼び出し (getEngineStatusSync 等) の連打を避けるため
@@ -207,11 +210,8 @@ class ChatViewModel(
         // 数百ms〜1秒程度の遅延は実用上問題にならない。
         private const val CONTEXT_USAGE_ESTIMATION_MIN_INTERVAL_MS = 1_000L
         /** メモリ注入に使えるコンテキスト予算の最大比率 */
-        private const val MEMORY_BUDGET_RATIO = 0.15f
         /** 会話履歴のために最低限確保する文字数 */
-        private const val HISTORY_RESERVE_CHARS = 2048
         /** "関連メモリ:\n" ヘッダー文字数 */
-        private const val MEMORY_HEADER_CHARS = 10
 
         /**
          * ローカル .litertlm を「破損・欠落」とみなして削除してよいときだけ true。
@@ -238,13 +238,13 @@ class ChatViewModel(
         }
     }
 
-    private class FirstTokenTimeoutException : CancellationException("FIRST_TOKEN_TIMEOUT")
+    internal class FirstTokenTimeoutException : CancellationException("FIRST_TOKEN_TIMEOUT")
 
-    private class GenerationStalledException : Exception("GENERATION_STALLED")
+    internal class GenerationStalledException : Exception("GENERATION_STALLED")
 
-    private class GenerationWallTimeoutException : Exception("GENERATION_WALL_TIMEOUT")
+    internal class GenerationWallTimeoutException : Exception("GENERATION_WALL_TIMEOUT")
 
-    private suspend fun getActiveSelectedModel(): String {
+    internal suspend fun getActiveSelectedModel(): String {
         val override = com.nezumi_ai.utils.PreferencesHelper.getPresetModelOverride(appContext)
         if (override.isNotBlank()) {
             return normalizeModel(mapPresetModelIdToSettingsModel(override) ?: override)
@@ -265,18 +265,9 @@ class ChatViewModel(
         return presetRepository?.getCurrentPreset()?.memoryEnabled ?: false
     }
 
-    private fun mapPresetModelIdToSettingsModel(modelId: String): String? {
-        // クラウドモデル ID (`cloud:...` / レガシー `gemini_api` / `claude_api`) は
-        // ModelManager がそのまま受け取れるので、変換せずにパススルーさせる。
-        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelId)) {
-            return modelId
-        }
-        return when (modelId) {
-            PresetConstants.MODEL_GEMMA4_LITERT -> "Gemma4-2B"
-            PresetConstants.MODEL_QWEN3_GGUF -> null
-            else -> modelId.takeIf { it.isNotBlank() }
-        }
-    }
+    private fun mapPresetModelIdToSettingsModel(modelId: String): String? =
+        ModelSessionCoordinator.mapPresetModelIdToSettingsModel(modelId)
+
 
     data class EmbeddingDownloadProgress(
         val fileName: String,
@@ -284,13 +275,13 @@ class ChatViewModel(
         val total: Long
     )
 
-    private val _currentSessionId = MutableStateFlow<Long?>(null)
+    internal val _currentSessionId = MutableStateFlow<Long?>(null)
     val currentSessionId: StateFlow<Long?> = _currentSessionId
 
     private val _isChatReady = MutableStateFlow(false)
     val isChatReady: StateFlow<Boolean> = _isChatReady
 
-    private val _messages = MutableStateFlow<List<MessageEntity>>(emptyList())
+    internal val _messages = MutableStateFlow<List<MessageEntity>>(emptyList())
     val messages: StateFlow<List<MessageEntity>> = _messages
 
     /**
@@ -307,7 +298,7 @@ class ChatViewModel(
      *   未登録の user メッセージは "最新バリアント" をデフォルト選択とする。
  * 永続化: セッションごとに SharedPreferences へ JSON で保存し、セッション切り替え時に復元する。
      */
-    private val _selectedVariantByParent = MutableStateFlow<Map<Long, Int>>(emptyMap())
+    internal val _selectedVariantByParent = MutableStateFlow<Map<Long, Int>>(emptyMap())
     val selectedVariantByParent: StateFlow<Map<Long, Int>> = _selectedVariantByParent
 
     /**
@@ -350,7 +341,7 @@ class ChatViewModel(
     }
 
     /** セッションのバリアント選択状態を SharedPreferences に保存する。 */
-    private fun persistVariantSelectionForSession(sessionId: Long, selection: Map<Long, Int>) {
+    internal fun persistVariantSelectionForSession(sessionId: Long, selection: Map<Long, Int>) {
         try {
             if (selection.isEmpty()) {
                 variantPrefs.edit().remove(variantPrefKey(sessionId)).apply()
@@ -373,36 +364,7 @@ class ChatViewModel(
     private fun applyVariantSelection(
         all: List<MessageEntity>,
         selection: Map<Long, Int>
-    ): List<MessageEntity> {
-        // parent ごとに assistant メッセージをグループ化
-        val byParent: Map<Long, List<MessageEntity>> = all
-            .filter { it.role != "user" && it.parentUserMessageId != null }
-            .groupBy { it.parentUserMessageId!! }
-            .mapValues { entry ->
-                entry.value.sortedWith(compareBy({ it.variantIndex }, { it.timestamp }))
-            }
-
-        val visibleIds = HashSet<Long>()
-        byParent.forEach { (parentId, variants) ->
-            if (variants.isEmpty()) return@forEach
-            val requested = selection[parentId]
-            val chosen = if (requested != null && requested in variants.indices) {
-                variants[requested]
-            } else {
-                // デフォルトは最新 (一番後に生成されたもの)
-                variants.last()
-            }
-            visibleIds.add(chosen.id)
-        }
-
-        return all.filter { msg ->
-            when {
-                msg.role == "user" -> true
-                msg.parentUserMessageId == null -> true  // 旧データはそのまま表示
-                else -> msg.id in visibleIds
-            }
-        }
-    }
+    ): List<MessageEntity> = contextMeter.applyVariantSelection(all, selection)
 
     /**
      * 未フィルタで保持している "全メッセージ" スナップショット。選択バリアントを
@@ -474,13 +436,13 @@ class ChatViewModel(
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText
 
-    private val _isLoading = MutableStateFlow(false)
+    internal val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
     private val _speakingMessageId = MutableStateFlow<Long?>(null)
     val speakingMessageId: StateFlow<Long?> = _speakingMessageId.asStateFlow()
 
-    private val _selectedModel = MutableStateFlow("Gemma4-2B")
+    internal val _selectedModel = MutableStateFlow("Gemma4-2B")
     val selectedModel: StateFlow<String> = _selectedModel
 
     private val _isModelLoading = MutableStateFlow(false)
@@ -499,7 +461,7 @@ class ChatViewModel(
     // finally がオーバーレイを消し、遅れた側がロード中のエンジンを unload する。
     // ロード本体は直列化し、表示は呼び出し側の深さで残す。
     private val modelLoadMutex = Mutex()
-    private var modelLoadingOverlayDepth = 0
+    internal var modelLoadingOverlayDepth = 0
 
     private fun composeModelLoadingLabel(): String {
         val phase = _modelLoadingPhase.value
@@ -550,7 +512,7 @@ class ChatViewModel(
      * モデルロード待ちのオーバーレイを完全にクリアする。早期 return / 例外 / 既ロードスキップのすべての終端で呼ぶことを想定。
  * 「モデル準備中が終わらない」バグの防御の中核。
      */
-    private fun clearModelLoadingIndicator() {
+    internal fun clearModelLoadingIndicator() {
         modelLoadingOverlayDepth = 0
         modelLoadingTickerJob?.cancel()
         modelLoadingTickerJob = null
@@ -558,6 +520,21 @@ class ChatViewModel(
         _modelLoadingPhase.value = null
         _isModelLoading.value = false
         _modelLoadingStatus.value = ""
+    }
+
+    /**
+     * モデルロード前の準備作業 (GGUF chat_template 確認など) でも
+     * 「モデル準備中」オーバーレイと経過秒数を出す。
+     * depth は増やさないので、[loadModelWithOverlay] の acquire/release と干渉しない。
+     * 既に表示中ならフェーズラベルだけ差し替える。
+     */
+    internal fun beginModelPreparationIndicator(phase: String? = null) {
+        _isModelLoading.value = true
+        if (modelLoadingTickerJob?.isActive != true) {
+            startModelLoadingIndicator(phase)
+        } else if (phase != null) {
+            updateModelLoadingPhase(phase)
+        }
     }
 
     private fun acquireModelLoadingOverlay() {
@@ -592,7 +569,7 @@ class ChatViewModel(
 
     private var embeddingDownloadJob: Job? = null
 
-    private val memoryExtractionWorker: com.nezumi_ai.data.memory.MemoryExtractionWorker? by lazy {
+    internal val memoryExtractionWorker: com.nezumi_ai.data.memory.MemoryExtractionWorker? by lazy {
         val repo = memoryRepository ?: return@lazy null
         val db = com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext)
         val sessionRepo = com.nezumi_ai.data.repository.MemorySessionRepository(
@@ -635,11 +612,11 @@ class ChatViewModel(
     // > 0 のとき UI は chars 換算ではなくこちらを優先表示する。
     //   - GGUF: llamaTokenize (実トークナイザ) + n_past (KV 実測値・画像/音声含む)
     //   - LiteRT-LM: Conversation.getTokenCount() (KV 実測値・画像/音声含む)
-    private val _contextUsageTokens = MutableStateFlow(0)
+    internal val _contextUsageTokens = MutableStateFlow(0)
     val contextUsageTokens: StateFlow<Int> = _contextUsageTokens
 
     /** contextUsageTokens のうち画像・音声由来のトークン数 (詳細表示用)。 */
-    private val _contextMediaTokens = MutableStateFlow(0)
+    internal val _contextMediaTokens = MutableStateFlow(0)
     val contextMediaTokens: StateFlow<Int> = _contextMediaTokens
 
     /**
@@ -669,8 +646,8 @@ class ChatViewModel(
      * 生成中は送信直前の計算結果を出したままにする。
      * ストリーミングで messages が再emitされてもメーターを消さず、リアルタイム更新もしない。
      */
-    @Volatile private var holdContextMeterDuringGeneration = false
-    @Volatile private var heldMeterSessionId: Long? = null
+    @Volatile internal var holdContextMeterDuringGeneration = false
+    @Volatile internal var heldMeterSessionId: Long? = null
     /** このプロセス内で、今表示中のセッション向けに確定した計算があるか。アプリ終了で捨てる。 */
     @Volatile private var meterCalculatedSessionId: Long? = null
     @Volatile private var ggufTokensPerImage: Int = 0
@@ -752,7 +729,7 @@ class ChatViewModel(
         }
     }
 
-    private val _uiMessage = MutableSharedFlow<String>()
+    internal val _uiMessage = MutableSharedFlow<String>()
     val uiMessage: SharedFlow<String> = _uiMessage
 
     private val _inferenceStream = MutableSharedFlow<String>()
@@ -772,7 +749,7 @@ class ChatViewModel(
         val totalMB: Long
     )
 
-    private val _memoryError = MutableStateFlow<MemoryErrorInfo?>(null)
+    internal val _memoryError = MutableStateFlow<MemoryErrorInfo?>(null)
     val memoryError: StateFlow<MemoryErrorInfo?> = _memoryError.asStateFlow()
 
     fun dismissMemoryError() {
@@ -814,17 +791,17 @@ class ChatViewModel(
         _gpuBackendFallback.value = null
     }
 
-    private val _toolCallState = MutableStateFlow<ToolCallState?>(null)
+    internal val _toolCallState = MutableStateFlow<ToolCallState?>(null)
     val toolCallState: StateFlow<ToolCallState?> = _toolCallState.asStateFlow()
 
-    private val _imageGenProgress = MutableStateFlow<Pair<Int, Int>?>(null)
+    internal val _imageGenProgress = MutableStateFlow<Pair<Int, Int>?>(null)
     val imageGenProgress: StateFlow<Pair<Int, Int>?> = _imageGenProgress.asStateFlow()
 
-    private val _currentTps = MutableStateFlow<Float?>(null)
+    internal val _currentTps = MutableStateFlow<Float?>(null)
     val currentTps: StateFlow<Float?> = _currentTps.asStateFlow()
 
     @Volatile
-    private var streamingAssistantMessageIdForTools: Long? = null
+    internal var streamingAssistantMessageIdForTools: Long? = null
 
     /**
      * ツール経由でキューイングした画像生成ジョブ。
@@ -880,24 +857,14 @@ class ChatViewModel(
     private val _cpuCompatibilityWarning = MutableStateFlow<CpuCompatibilityWarningInfo?>(null)
     val cpuCompatibilityWarning: StateFlow<CpuCompatibilityWarningInfo?> = _cpuCompatibilityWarning.asStateFlow()
 
-    private val _modelErrorDialogMessage = MutableStateFlow<String?>(null)
+    internal val _modelErrorDialogMessage = MutableStateFlow<String?>(null)
     val modelErrorDialogMessage: StateFlow<String?> = _modelErrorDialogMessage.asStateFlow()
 
-    private fun formatModelErrorDialogMessage(
+    internal fun formatModelErrorDialogMessage(
         title: String,
         message: String,
         details: String? = null
-    ): String {
-        return buildString {
-            append(title)
-            append("\n\n")
-            append(message)
-            details?.takeIf { it.isNotBlank() }?.let {
-                append("\n\n")
-                append(it)
-            }
-        }
-    }
+    ): String = ModelSessionCoordinator.formatModelErrorDialogMessage(title, message, details)
 
     fun dismissMemoryWarning() {
         _memoryWarning.value = null
@@ -907,7 +874,7 @@ class ChatViewModel(
         _modelErrorDialogMessage.value = null
     }
 
-    private fun handleModelLoadIssue(
+    internal fun handleModelLoadIssue(
         selectedModel: String,
         error: Throwable?,
         title: String = appContext.getString(R.string.model_load_error_title),
@@ -1032,6 +999,8 @@ class ChatViewModel(
 
     private var modelManager: ModelManager? = null
     private var generationJob: Job? = null
+    /** プリセット先読みの二重起動防止 */
+    private var preloadPresetJob: Job? = null
     private val generationControlMutex = Mutex()
     private var messagesCollectionJob: Job? = null
 
@@ -1089,7 +1058,7 @@ class ChatViewModel(
     private val roleTurnMarkerRegex =
         Regex("(?i)(?:^|[\\s\\n\\r])(?:User|Assistant|ユーザー|アシスタント)\\s*[:：]")
     /** 起動時の pending 抽出処理を1回だけ実行するフラグ */
-    private var pendingExtractionProcessed = false
+    internal var pendingExtractionProcessed = false
 
     // WakeLock管理
     private var screenWakeLock: PowerManager.WakeLock? = null
@@ -1689,7 +1658,12 @@ class ChatViewModel(
     fun preloadActivePresetModel() {
         // 送信中でも戻る。同じモデルなら loadModelWithOverlay が直列化して待つ。
         // ここで return すると、プリセットを閉じた直後のロードが落ちたままになる。
-        viewModelScope.launch(Dispatchers.IO) {
+        // ChatFragment 等から連続で呼ばれると並行 load が走り meter 状態が壊れやすいので単一飛行。
+        if (preloadPresetJob?.isActive == true) {
+            Log.d(TAG, "preloadActivePresetModel: already in progress, skip")
+            return
+        }
+        preloadPresetJob = viewModelScope.launch(Dispatchers.IO) {
             // バグ修正: モデル削除でプリセットが未選択状態 (modelId == "") になっているとき、
             // getActiveSelectedModel() は settingsRepository.getSelectedModel()
             // (アプリ全体の「最後に使ったモデル」設定、実質「1番目のモデル」) に
@@ -1714,9 +1688,12 @@ class ChatViewModel(
                 _uiMessage.emit(msg)
                 return@launch
             }
-            // テンプレート全走査や llama.cpp のメモリ見積もりを先に走らせると、
-            // 実ロード (loadModelWithOverlay) まで届かずオーバーレイも出ない。
-            // Thinking は保存済み capability だけを見て、走査はロード後に任せる。
+            // chatInferenceConfigForModel 内の isAlwaysOnThinkingModel が
+            // 未キャッシュの GGUF chat_template を読む間、オーバーレイ無しだとフリーズに見える。
+            // loadModelWithOverlay 到達前に準備中表示を開始する (depth は増やさない)。
+            beginModelPreparationIndicator(
+                appContext.getString(R.string.model_loading_phase_template_scan)
+            )
             val config = chatInferenceConfigForModel(selectedModel, probeTemplate = false)
             Log.d(TAG, "preloadActivePresetModel: start model=$selectedModel")
             val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
@@ -2111,8 +2088,8 @@ class ChatViewModel(
     }
 
     /** 再生成リクエストに伴う assistant バリアントのスペック。generateAIResponse 内で拾い上げられる。 */
-    private data class AssistantVariantSpec(val parentUserMessageId: Long, val variantIndex: Int)
-    private var _pendingAssistantVariantSpec: AssistantVariantSpec? = null
+    internal data class AssistantVariantSpec(val parentUserMessageId: Long, val variantIndex: Int)
+    internal var _pendingAssistantVariantSpec: AssistantVariantSpec? = null
 
     private suspend fun revokePromptFromMessageInternal(
         sessionId: Long,
@@ -2149,1648 +2126,22 @@ class ChatViewModel(
         _uiMessage.emit(if (deleteMediaFiles) appContext.getString(R.string.vm_prompt_undone) else appContext.getString(R.string.vm_message_editing))
     }
 
+    private val generationCoordinator by lazy { GenerationCoordinator(this) }
+
     private suspend fun generateAIResponse(
         sessionId: Long,
         userMessage: String,
         images: List<Bitmap> = emptyList(),
         audioClips: List<ByteArray> = emptyList(),
         currentTurnMessageId: Long? = null
-    ) {
-        var streamingMessageId: Long? = null
-        var currentHasMediaInput = false
-        var currentEngineModelName: String? = null
-        // Bug fix: 正常完了パス (isStreaming=false を明示的に書き込んだ) と、
-        //   finally の safety fallback (異常収束時のみ ThinkingLeakSalvage を走らせたい)
-        //   を区別するためのフラグ。DB の isStreaming 再読み込みだけに頼ると、
-        //   正常完了直後の一瞬のタイミングで誤って salvage が発火し、正しく分離済みの
-        //   thinking が再度 content 側へ漏れて表示される不具合があった。
-        var normalCompletionPersisted = false
-        // Bug fix(#5): 過去ターンの media を LiteRT に再添付する際に生成する Bitmap を保持し、
-        // finally で確実に recycle するため try の外側にスコープを出しておく。
-        val pastHistoryBitmapsToRecycle = mutableListOf<Bitmap>()
-        val aiStartMs = System.currentTimeMillis()  // Phase 11: 全体ロード時間を計測開始
-        try {
-            // Acquire WakeLock to prevent screen sleep during generation
-            acquireScreenWakeLock()
+    ) = generationCoordinator.generateAIResponse(
+        sessionId = sessionId,
+        userMessage = userMessage,
+        images = images,
+        audioClips = audioClips,
+        currentTurnMessageId = currentTurnMessageId
+    )
 
-            // Tool Call State マシンをリセット。
-            //   以前は viewModelScope.launch で非同期にしていたが、前ターンの
-            //   Executing / Result が開始直後の 1 フレーム残る / 停止直後の開始で
-            //   古い状態が一瞬表示される原因になっていたため同期でクリアする。
-            _toolCallState.value = null
-
-            val manager = requireModelManager()
-            val selectedModel = getActiveSelectedModel()
-            val engineModelName = toEngineModelName(selectedModel)
-            currentEngineModelName = engineModelName
-
-            _selectedModel.value = selectedModel
-            val hasMediaInput = images.isNotEmpty() || audioClips.isNotEmpty()
-            currentHasMediaInput = hasMediaInput
-            val modelAvailable = ModelFileManager.isModelAvailable(appContext, engineModelName)
-            Log.d(TAG, "generateAIResponse: model=$selectedModel engine=$engineModelName available=$modelAvailable")
-            if (!modelAvailable) {
-                val unavailableMsg = if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)) {
-                    appContext.getString(R.string.cloud_model_unconfigured, selectedModel)
-                } else {
-                    appContext.getString(R.string.selected_model_not_downloaded, selectedModel)
-                }
-                Log.w(TAG, "generateAIResponse: load not started, model unavailable: $engineModelName")
-                if (modelLoadingOverlayDepth == 0) {
-                    clearModelLoadingIndicator()
-                }
-                messageRepository.addMessage(
-                    sessionId = sessionId,
-                    role = "assistant",
-                    content = unavailableMsg
-                )
-                return
-            }
-            // GGUF テンプレートの全走査をロードの前に置くと、llama.cpp のロードが始まらない。
-            // Thinking は保存済み capability で決め、未保存分はロード後の自動有効化に任せる。
-            val modelLoadStartMs = System.currentTimeMillis()
-            val baseConfig = chatInferenceConfigForModel(selectedModel, probeTemplate = false)
-            val backend = settingsRepository.getBackendForModel(selectedModel)
-            // Bug fix: LiteRT-LM 外部インポートモデル (.task / .litertlm) については、
-            // モデル設定で画像/音声のスイッチを ON にしていない限り requireMultimodal を立てない。
-            // これをガードしないと vision/audio executor のロードを試みてエラーになる。
-            val engineLowerForCaps = engineModelName.lowercase()
-            val isImportedLiteRtForCaps = (engineLowerForCaps.endsWith(".task") || engineLowerForCaps.endsWith(".litertlm")) &&
-                File(engineModelName).isAbsolute
-            val importedMultimodalAllowed = if (isImportedLiteRtForCaps) {
-                val caps = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, engineModelName)
-                (images.isNotEmpty() && caps.imageEnabled) || (audioClips.isNotEmpty() && caps.audioEnabled)
-            } else {
-                // ビルトイン Gemma 等は従来通り hasMediaInput だけで判定
-                hasMediaInput
-            }
-            val config = baseConfig.copy(
-                backendType = backend,
-                requireMultimodal = importedMultimodalAllowed && !engineModelName.endsWith(".gguf", ignoreCase = true)
-            ).normalized()
-            val aiStartMs = System.currentTimeMillis()
-            Log.d(TAG, "generateAIResponse START: model=$selectedModel, enableThinking=${config.enableThinking}, backend=${config.backendType}, requestedBackend=$backend")
-
-            // Phase 11: ロード進捗ログの細分化
-            Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel templateProbe=false")
-
-            // ロード前メモリ警告を出す。ユーザーが続行を選ぶまで実ロードは始めない。
-            // proceedWithModelLoad 側で skipMemoryWarning=true にしてから再呼び出しする。
-            val isModelAlreadyLoaded = manager.isModelLoaded(engineModelName, config)
-            val skipMemoryWarning = false
-            Log.d(
-                TAG,
-                "generateAIResponse: engineModelName=$engineModelName isModelAlreadyLoaded=$isModelAlreadyLoaded skipMemoryWarning=$skipMemoryWarning"
-            )
-
-            val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false, skipMemoryWarning = skipMemoryWarning)
-
-            val modelLoadEndMs = System.currentTimeMillis()
-            Log.d(TAG, "generateAIResponse LOAD_END: model=$selectedModel duration=${modelLoadEndMs - modelLoadStartMs}ms success=${loadResult.isSuccess}")
-
-            if (loadResult.isFailure) {
-                val error = loadResult.exceptionOrNull()
-                val errorMsg = error?.message ?: "Unknown error"
-                Log.e(TAG, "Model loading failed for $selectedModel: $errorMsg", error)
-
- // 警告ダイアログ表示中はユーザー操作を待つ
-                if (error.isModelLoadWarningMarker()) {
-                    Log.d(TAG, "Model warning shown - waiting for user action: $errorMsg")
-                    return
-                }
-
-                // メモリエラーを検出（実際の OOM エラー）
-                if (error.isMemoryLoadFailure()) {
-                    val memStatus = MemoryObserver.getMemoryStatus(appContext)
-                    _memoryError.value = MemoryErrorInfo(
-                        usedPercent = memStatus.usedPercent,
-                        usedMB = memStatus.usedMB,
-                        totalMB = memStatus.maxMB
-                    )
-                    return
-                }
-
-                // ファイル読み込みエラーを検出
-                if (shouldDeleteLocalModelFileOnLoadError(errorMsg, error)) {
-
-                    Log.w(TAG, "モデルファイルの読み込みエラー: $selectedModel")
-                    // モーダルダイアログ用に詳細をセット
-                    _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = appContext.getString(R.string.model_load_error_title),
-                        message = appContext.getString(R.string.model_load_error_unreadable),
-                        details = if (errorMsg.isNotBlank()) appContext.getString(R.string.model_error_path_with_msg, errorMsg, selectedModel) else appContext.getString(R.string.model_error_path_only, selectedModel)
-                    )
-                    // 軽い通知も出す
- _uiMessage.emit(appContext.getString(R.string.model_load_error_unreadable))
-
-                    // ファイルを削除してリセット
-                    try {
-                        val modelEnum = when (selectedModel.uppercase()) {
-                            "GEMMA4-2B" -> ModelFileManager.LocalModel.GEMMA4_2B
-                            "GEMMA4-4B" -> ModelFileManager.LocalModel.GEMMA4_4B
-                            else -> ModelFileManager.LocalModel.GEMMA4_2B
-                        }
-                        ModelFileManager.clearCorruptedModel(appContext, modelEnum)
-                        Log.i(TAG, "モデルファイルをクリアしました")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "モデルファイルのクリアに失敗", e)
-                    }
-                    return
-                }
-
-                handleModelLoadIssue(selectedModel, error)
-                return
-            }
-
-            Log.d(TAG, "Starting inference for session $sessionId")
-            // 生成中も送信直前の計算を出す。リアルタイム更新はしない。
-            publishContextMeterBeforeGeneration(sessionId)
-
-            // ① 起動時 pending 抽出処理（モデルロード完了後に1回だけ実行）
-            //
-            // v2.1+: TOOL_ONLY モードのときは pending 自体が発生しないはずだが、
-            // 以前のバージョンで作られた pending フラグが残っている可能性があるため
-            // Worker 内部でも共に安全側にガードしている。
-            if (!pendingExtractionProcessed) {
-                pendingExtractionProcessed = true
-                val pendingSaveMode = settingsRepository.getMemorySaveMode()
-                if (pendingSaveMode != com.nezumi_ai.data.memory.MemorySaveMode.TOOL_ONLY) {
-                    memoryExtractionWorker?.processPending(manager, config.copy(
-                        temperature = 0.1f,
-                        enableThinking = false
-                    ), pendingSaveMode, { fetchSessionId ->
-                        messageRepository.getMessagesForSessionOnce(fetchSessionId)
-                    }, suppressContradictionDeletion = true)
-                } else {
-                    Log.d(TAG, "MEMORY_PENDING: TOOL_ONLY mode - skipping pending processing")
-                }
-            }
-
-            // LiteRT-LM 経路では Conversation API がエンジン側でチャットテンプレートを適用するため、
-            // アプリ側でテンプレート文字列を組まず構造化ペイロード (system / history / current) を送る。
-            // GGUF / クラウド / 内部推論は従来通りの単一テキストプロンプトを使う。
-            val promptForModel = if (!isGgufEngineModel(engineModelName) &&
-                !com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
-            ) {
-                buildLiteRtStructuredPayload(
-                    sessionId = sessionId,
-                    config = config,
-                    currentTurnMessageId = currentTurnMessageId
-                )
-            } else {
-                buildPromptWithSessionContext(
-                    sessionId = sessionId,
-                    config = config,
-                    manager = manager,
-                    engineModelName = engineModelName,
-                    currentTurnMessageId = currentTurnMessageId
-                )
-            }
-
-            // Bug fix: 外部インポートモデルの capability チェック。
-            // GGUF（.gguf）に加え、LiteRT-LM インポート（.task / .litertlm）も同様に
-            // 画像/音声のスイッチがオフの場合はエンジンに media を渡さない。
-            // これをガードしないと LiteRtLmEngine 側で hasMultimodalInput=true と判定され、
-            // requireMultimodal=true での再ロードが走り、非マルチモーダルなインポートモデルで
-            // ロードエラーが発生する。
-            val engineLower = engineModelName.lowercase()
-            val isImportedGguf = engineLower.endsWith(".gguf") && File(engineModelName).isAbsolute
-            val isImportedLiteRt = (engineLower.endsWith(".task") || engineLower.endsWith(".litertlm")) &&
-                File(engineModelName).isAbsolute
-            if (isImportedGguf || isImportedLiteRt) {
-                val caps = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, engineModelName)
-                val modelKindLabel = if (isImportedGguf) "GGUF" else "LiteRT-LM"
-                if (images.isNotEmpty() && !caps.imageEnabled) {
-                    Log.w(
-                        TAG,
-                        "$modelKindLabel: images sent but image capability off. count=${images.size}"
-                    )
-                    _uiMessage.emit(
-                        appContext.getString(R.string.vm_model_image_off, modelKindLabel)
-                    )
-                    return
-                }
-                if (audioClips.isNotEmpty() && !caps.audioEnabled) {
-                    Log.w(
-                        TAG,
-                        "$modelKindLabel: audio sent but audio capability off. count=${audioClips.size}"
-                    )
-                    _uiMessage.emit(
-                        appContext.getString(R.string.vm_model_audio_off, modelKindLabel)
-                    )
-                    return
-                }
-            }
-
-            // GGUF マルチモーダル: JNI が mmproj 未指定時もベース GGUF から clip/mtmd を初期化する（単一ファイル統合型）
-
-            // Bug fix(#5): LiteRT-LM では会話の KV キャッシュを再利用するため、以前のターンで渡した
-            // 画像/音声をモデルが参照できない。以前ターンの media を送信履歴から採集し、今ターンの
-            // images/audioClips の先頭に追加することで、マルチターンでも画像/音声を参照できるようにする。
-            // GGUF エンジンは現状 mtmd 側の仕様上マルチターン参照をサポートしていないため、
-            // LiteRT エンジン使用時のみ過去 media を取り込む。
-            val isLiteRtEngine = !isGgufEngineModel(engineModelName)
-            val combinedImages = mutableListOf<Bitmap>().also { it.addAll(images) }
-            val combinedAudio = mutableListOf<ByteArray>().also { it.addAll(audioClips) }
-            if (isLiteRtEngine) {
-                runCatching {
-                    val historyMessages = messageRepository.getMessagesForSessionOnce(sessionId)
-                    // 今ターンの user メッセージを除外するため currentTurnMessageId より古いものだけを対象にする。
-                    val pastMessages = if (currentTurnMessageId != null) {
-                        historyMessages.filter { it.id != currentTurnMessageId && it.timestamp <
-                            (historyMessages.firstOrNull { m -> m.id == currentTurnMessageId }?.timestamp ?: Long.MAX_VALUE) }
-                    } else {
-                        historyMessages.dropLast(1)
-                    }
-                    // 過去の user メッセージの画像/音声を古い順に読み込んで先頭にプレフィックスする。
-                    val historicalImages = mutableListOf<Bitmap>()
-                    val historicalAudio = mutableListOf<ByteArray>()
-                    for (m in pastMessages.filter { it.role == "user" }) {
-                        m.imageUri
-                            ?.split(",")
-                            ?.map { it.trim() }
-                            ?.filter { it.isNotEmpty() }
-                            // nezumi://videoframes / nezumi://txtfile マーカーは Bitmap 化対象外
-                            ?.filter { !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) }
-                            ?.filter { !com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(it) }
-                            ?.forEach { uriStr ->
-                                val uri = MessageMediaStore.toUri(uriStr) ?: return@forEach
-                                val bmp = loadBitmapFromUri(uri) ?: return@forEach
-                                val scaled = scaleBitmapTo1024(bmp)
-                                if (scaled !== bmp) bmp.recycle()
-                                historicalImages.add(scaled)
-                                pastHistoryBitmapsToRecycle.add(scaled)
-                            }
-                        m.audioUri?.let { uriStr ->
-                            val uri = MessageMediaStore.toUri(uriStr) ?: return@let
-                            val bytes = loadAudioBytesFromUri(uri) ?: return@let
-                            historicalAudio.add(bytes)
-                        }
-                    }
-                    if (historicalImages.isNotEmpty() || historicalAudio.isNotEmpty()) {
-                        combinedImages.addAll(0, historicalImages)
-                        combinedAudio.addAll(0, historicalAudio)
-                        Log.d(
-                            TAG,
-                            "LiteRT multi-turn media replay: addedImages=${historicalImages.size} addedAudio=${historicalAudio.size}"
-                        )
-                    }
-                }.onFailure {
-                    Log.w(TAG, "Failed to load past-turn media for LiteRT replay", it)
-                }
-            }
-            val effectiveHasMediaInput = combinedImages.isNotEmpty() || combinedAudio.isNotEmpty()
-            if (effectiveHasMediaInput && isLiteRtEngine) {
-                // LiteRT 側に「このセッションで media を取り扱う」と伝え、 KV キャッシュ再利用ではなく
-                // 毎ターン conversation を作り直すようにさせる。
-                runCatching {
-                    requireModelManager().liteRtEngineForMultiTurnMedia()?.markSessionHasMedia(sessionId)
-                }
-            }
-
-            // ストリーミング推論を実行（マルチモーダル対応）
-            val aiResponseFlow: Flow<String> = withContext(Dispatchers.IO) {
-                if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)) {
-                    // Phase 5/6: クラウドは role 付きメッセージ配列を構造化して送る正式経路。
-                    // 旧来の平文プロンプト (Gemma タグ込み単一文字列) は使わない (計画書 1.2)。
-                    Log.d(TAG, "Using cloud structured inference: images=${combinedImages.size}")
-                    manager.runCloudInferenceWithMessages(
-                        sessionId = sessionId,
-                        messages = buildCloudChatMessages(
-                            sessionId = sessionId,
-                            config = config,
-                            engineModelName = engineModelName,
-                            currentTurnMessageId = currentTurnMessageId
-                        ),
-                        images = combinedImages,
-                        config = config
-                    )
-                } else if (effectiveHasMediaInput) {
-                    // マルチモーダル推論
-                    Log.d(TAG, "Using multimodal inference: ${combinedImages.size} images, ${combinedAudio.size} audio clips (incl. past turns)")
-                    manager.runInferenceWithMedia(
-                        sessionId = sessionId,
-                        prompt = promptForModel,
-                        images = combinedImages,
-                        audioClips = combinedAudio,
-                        config = config
-                    )
-                } else {
-                    // テキストのみ推論
-                    Log.d(TAG, "Using text-only inference")
-                    manager.runInference(
-                        sessionId = sessionId,
-                        prompt = promptForModel,
-                        config = config
-                    )
-                }
-            }
-
- // 応答バリアント: 再生成リクエストの場合は _pendingAssistantVariantSpec がセットされているので
-            //   その parent + variantIndex を使う。通常送信の場合は currentTurnMessageId (user メッセージ id) を
-            //   parent にして variantIndex=0 で新規登録する。currentTurnMessageId が null なら旧互換の null。
-            val variantSpec = _pendingAssistantVariantSpec
-            val effectiveParentId = variantSpec?.parentUserMessageId ?: currentTurnMessageId
-            val effectiveVariantIndex = variantSpec?.variantIndex ?: 0
-            streamingMessageId = messageRepository.addMessage(
-                sessionId = sessionId,
-                role = "assistant",
-                content = "",
-                isStreaming = true,
-                parentUserMessageId = effectiveParentId,
-                variantIndex = effectiveVariantIndex
-            )
-            val activeStreamingMessageId = streamingMessageId
-                ?: throw IllegalStateException("Failed to create streaming message")
-            streamingAssistantMessageIdForTools = activeStreamingMessageId
- // 新: TTFT (Time To First Token) の基準時刻。推論パイプラインに入った直後の時刻として抱える。
-            val streamStartedAtMs: Long = SystemClock.elapsedRealtime()
- // ストリーミングレコードの id が定まったので、この parent の選択ターゲットを
-            //   新規作成した variantIndex に合わせておく。UI を新応答にジャンプさせるため。
-            if (effectiveParentId != null) {
-                val newSelection = _selectedVariantByParent.value.toMutableMap()
-                newSelection[effectiveParentId] = effectiveVariantIndex
-                _selectedVariantByParent.value = newSelection
- // 永続化: 新規バリアント選択も保存する。
-                _currentSessionId.value?.let { sid ->
-                    persistVariantSelectionForSession(sid, newSelection)
-                }
-            }
-
-            val answerBuilder = StringBuilder()
-            val thinkingBuilder = StringBuilder()
-            var nativeThinkingStream = false
-            // Only seed a synthetic `<think>` opener when the selected model family actually uses
-            // assistant-side `<think>...</think>` prefilling. Qwen uses `/think` appended to the
-            // last user turn, and Gemma uses a global `<|think|>` prefix instead; seeding `<think>`
-            // for those models would misparse their outputs.
-            // ネイティブ (GGUF chat_template) 適用中はテンプレート側が prefill を制御するため、
-            // Kotlin 側の `<think>` seed は二重適用になるので抑制する。
-            val nativeGgufTemplateActive =
-                isGgufEngineModel(engineModelName) && manager.hasGgufChatTemplate()
-            val markupSpec = runCatching {
-                GgufFormatResolver.resolveMarkupSpec(engineModelName, appContext)
-            }.getOrDefault(ChatMarkupSpec.DEFAULT)
-            val isGgufStream = isGgufEngineModel(engineModelName)
-            val resolvedThinkStyle = markupSpec.thinkingStyle
-                ?: ModelNameHeuristics.resolveThinkingPromptStyle(
-                    modelPathOrName = engineModelName,
-                    chatTemplate = GgufFormatResolver.resolveChatTemplateText(appContext, engineModelName),
-                )
-            val usesThinkPrefill =
-                resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.ASSISTANT_TAG ||
-                    resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.GEMMA4_CHANNEL ||
-                    resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
-            val chatTemplateText = GgufFormatResolver.resolveChatTemplateText(appContext, engineModelName)
-            // Granite 4.2 公式 jinja は add_generation_prompt で
-            // `<|im_start|>assistant\n<think>\n` をプロンプト末尾に置く。
-            // 開きタグは出力に出ず、閉じタグ `</think>` だけが生成される。
-            val promptOpenedThink =
-                config.enableThinking &&
-                    isGgufEngineModel(engineModelName) &&
-                    ModelNameHeuristics.templatePrefillsOpenThink(chatTemplateText.orEmpty())
-            val implicitThinkPrefill =
-                config.enableThinking &&
-                    isGgufEngineModel(engineModelName) &&
-                    usesThinkPrefill &&
-                    !nativeGgufTemplateActive &&
-                    !promptOpenedThink
-            if (implicitThinkPrefill) {
-                answerBuilder.append("<think>\n")
-            }
-            fun rawForThinkParse(raw: String): String {
-                if (!promptOpenedThink) return raw
-                if (markupSpec.containsThinkingOpen(raw)) return raw
-                return "<think>\n$raw"
-            }
-            fun treatUnmarkedAsThinking(raw: String, streaming: Boolean): Boolean {
-                if (!config.enableThinking || !isGgufStream) return false
-                if (markupSpec.containsThinkingClose(raw)) return false
-                if (markupSpec.containsThinkingOpen(raw) || implicitThinkPrefill || promptOpenedThink) return true
-                return streaming && markupSpec.supportsThinking
-            }
-            var lastPersistedContent = ""
-            var lastPersistedThinking: String? = null
-            // 確定時の一括パーサーがストリーミング中の分離結果を壊さないよう、
-            // UIへ最後に提示した本文/Thinkingのペアを保持する。
-            var lastStreamContentForFinal = ""
-            var lastStreamThinkingForFinal: String? = null
-            // 生成中に一度でも「思考と本文が別物として分かれた」状態を残す。
-            // FINAL チャンクがタグ無し全文だと、最後の UI 更新が本文を Thinking へ
-            // 戻して lastStreamContent を空にしてしまう。
-            var lastGoodStreamContent = ""
-            var lastGoodStreamThinking: String? = null
-            var lastPersistAt = 0L
-            var toolResultsJson: String? = null
-            var firstOutputAtMs: Long? = null
- // 新: 本文の最初のトークンが到達した時刻 (シンキング間は含めない。TPS 算出に使う)
-            var firstAnswerAtMs: Long? = null
- // 新: シンキング中の経過時間 (ms) を累積して本文生成時間から引く
-            var thinkingElapsedMs: Long = 0L
- // 新: シンキングフェーズ開始時刻 (フェーズが閉じた時に差分を thinkingElapsedMs に加算)
-            var thinkingStartedAtMs: Long? = null
-            var generationEndAtMs: Long? = null
-            var tokenCount = 0f
-
-            // ストリーム内容を収集
-            // タイムアウトは「最初の出力が来るまで」のみ有効。
-            val firstTokenSeen = AtomicBoolean(false)
-
-            val lastChunkAt = AtomicLong(SystemClock.elapsedRealtime())
-            val wallEndAt = SystemClock.elapsedRealtime() + GENERATION_WALL_TIMEOUT_MS
-            val toolCallInProgress = AtomicBoolean(false)
-            var streamAbortNote: String? = null
-            var collectionCancelledByUser = false
-            // FINAL は生成ラウンドの終端。Binder のバッチ化で FINAL と後続の
-            // stale chunk が同じ配信に含まれても、終了後の文字列を本文/Thinkingへ混ぜない。
-            var finalReceived = false
-            try {
-                withContext(Dispatchers.IO) {
-                    coroutineScope {
-                        val firstTokenTimeoutJob = launch {
-                            delay(RESPONSE_TIMEOUT_MS)
-                            if (!firstTokenSeen.get()) {
-                                cancel(FirstTokenTimeoutException())
-                            }
-                        }
-
-                        val stallTimeoutMs = PreferencesHelper
-                            .getGenerationStallTimeoutMs(appContext).toLong()
-                        val stallWatchJob = launch {
-                            while (isActive) {
-                                delay(GENERATION_STALL_CHECK_MS)
-                                // Bug fix (応答終了後もボタンが生成中状態のまま):
-                                //   壁時計タイムアウトはこれまで chunk 到着時にしか評価されず、
-                                //   ツール実行中等にエンジンの Flow が黙って止まると
-                                //   (toolCallInProgress=true で停滞検知もスキップされるため)
-                                //   collect が永久に返らず _isLoading が true のまま残っていた。
-                                //   ウォッチドッグ側でも壁時計を評価し、どんな停滞パターンでも
-                                //   必ず収束するようにする。
-                                if (SystemClock.elapsedRealtime() > wallEndAt) {
-                                    throw GenerationWallTimeoutException()
-                                }
-                                if (!firstTokenSeen.get()) continue
-                                val idle = SystemClock.elapsedRealtime() - lastChunkAt.get()
-                                // Bug fix (LiteRT tool-call パース失敗後に生成中のまま):
-                                //   Gemma4 形式の壊れた tool call で native が Status Code: 3
-                                //   (Failed to parse tool calls from code block) を出したあと
-                                //   Flow が完了せず、toolCallInProgress=true のまま停滞検知を
-                                //   永久スキップしていた。ツール実行中でも chunk 無通信が
-                                //   stallTimeout を超えたら停滞扱いにする。
-                                if (idle >= stallTimeoutMs) {
-                                    throw GenerationStalledException()
-                                }
-                            }
-                        }
-
-                        try {
-                            aiResponseFlow.collect { chunk ->
-                                if (SystemClock.elapsedRealtime() > wallEndAt) {
-                                    throw GenerationWallTimeoutException()
-                                }
-                                if (!firstTokenSeen.getAndSet(true)) {
-                                    firstTokenTimeoutJob.cancel()
-                                    firstOutputAtMs = SystemClock.elapsedRealtime()
-                                }
-                                val chunkArrivedAt = SystemClock.elapsedRealtime()
-                                lastChunkAt.set(SystemClock.elapsedRealtime())
-                                // Split incoming chunk by embedded control markers so that
-                                // markers like \u0000__TPS__\u0000 or \u0000__FINAL__\u0000
-                                // are handled separately even if they arrive inside a single
-                                // delivered chunk.
-                                // クラウドモデルではライブ TPS を更新しない
-                                //   (メーター同様、ネットワーク込みの見かけ速度は表示しない方針)。
-                                val isCloudStreamModel =
-                                    com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
-                                var finalFromModelGlobal: String? = null
-                                val segments = InferenceStreamProtocol.splitStreamChunks(chunk)
-                                for (seg in segments) {
-                                    if (finalReceived) continue
-                                    val finalFromModel = InferenceStreamProtocol.decodeFinal(seg)
-                                    val thinkDelta = InferenceStreamProtocol.decodeThinkChunk(seg)
-                                    val toolCallChunk = InferenceStreamProtocol.decodeToolCallChunk(seg)
-                                    val toolResultChunk = InferenceStreamProtocol.decodeToolResultChunk(seg)
-                                    val toolResults = InferenceStreamProtocol.decodeToolResults(seg)
-                                    val tpsValue = InferenceStreamProtocol.decodeTps(seg)
-                                    val mediaProgress = InferenceStreamProtocol.decodeMediaProgress(seg)
-
-                                    when {
-                                        mediaProgress != null -> {
-                                            // :gguf プロセスから転送された入力処理進捗をメイン側の
-                                            // MediaTokenProgress に反映する（UI が collect している）。
-                                            if (mediaProgress.stage.isBlank()) {
-                                                MediaTokenProgress.clear()
-                                            } else {
-                                                MediaTokenProgress.update(
-                                                    mediaProgress.stage,
-                                                    mediaProgress.tokens,
-                                                    mediaProgress.tps
-                                                )
-                                            }
-                                        }
-                                        finalFromModel != null -> {
-                                            finalReceived = true
-                                            Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
-                                            // 完了時に FINAL 全文でストリーム済み本文を差し替えない。
-                                            // 差し替えるとツールカード周りで「完全版への再置き換え」が起き、
-                                            // テキストが一瞬消えてガクンと跳ねる。FINAL は終了合図だけに使う。
-                                            finalFromModelGlobal =
-                                                answerBuilder.toString().ifBlank { finalFromModel }
-                                        }
-                                        thinkDelta != null -> {
- // シンキングフェーズ開始を記録 (未開始のときだけ)
-                                            if (thinkingStartedAtMs == null && firstAnswerAtMs == null) {
-                                                thinkingStartedAtMs = chunkArrivedAt
-                                            }
-                                            if (!nativeThinkingStream && answerBuilder.isNotBlank()) {
-                                                val leadingThinking =
-                                                    Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
-                                                if (leadingThinking.isNotBlank()) {
-                                                    thinkingBuilder.append(leadingThinking)
-                                                }
-                                                answerBuilder.clear()
-                                            }
-                                            nativeThinkingStream = true
-                                            if (thinkDelta.isNotEmpty()) {
-                                                val curT = thinkingBuilder.toString()
-                                                val mergedT = mergeStreamingChunk(curT, thinkDelta)
-                                                if (mergedT != curT && mergedT.length >= curT.length) {
-                                                    thinkingBuilder.clear()
-                                                    thinkingBuilder.append(mergedT)
-                                                    // 修正: Thinking の差分も生成トークンとして計上する。
-                                                    //   (旧: 本文のみ計上していたため、Thinking が長いと
-                                                    //    TPS が実態より大幅に低く表示されていた)
-                                                    val thinkDeltaText = mergedT.substring(curT.length)
-                                                    tokenCount += TextTokenEstimator.estimateOutputTokens(thinkDeltaText)
-                                                    // ライブ TPS は最初の出力 (Thinking 含む) からの経過で算出
-                                                    if (tokenCount >= 10f && firstOutputAtMs != null && !isCloudStreamModel) {
-                                                        val elapsedThink = (SystemClock.elapsedRealtime() - firstOutputAtMs!!)
-                                                            .coerceAtLeast(1L)
-                                                        _currentTps.value = (tokenCount * 1000f) / elapsedThink
-                                                    }
-                                                } else if (mergedT.length < curT.length) {
-                                                    Log.w(
-                                                        TAG,
-                                                        "Thinking chunk merge would shrink: ${curT.length} -> ${mergedT.length}, skipping"
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        toolCallChunk != null -> {
-                                            toolCallInProgress.set(true)
-                                            Log.d(TAG, "Tool call detected: $toolCallChunk")
-                                            val toolNames = toolCallChunk.split(",").map { it.trim() }
-                                            for (toolName in toolNames) {
-                                                viewModelScope.launch {
-                                                    _toolCallState.value = ToolCallState.Executing(
-                                                        toolName = toolName,
-                                                        elapsedMs = System.currentTimeMillis() - lastChunkAt.get()
-                                                    )
-                                                    // 画像生成以外のツール実行時は、前回の画像生成進捗をクリア
-                                                    if (!toolName.equals("generate_image", ignoreCase = true)) {
-                                                        _imageGenProgress.value = null
-                                                    }
-                                                }
-                                                val executingMsg = when (toolName) {
- "set_alarm"-> appContext.getString(R.string.tool_exec_set_alarm)
- "send_message"-> appContext.getString(R.string.tool_exec_send_message)
- "search"-> appContext.getString(R.string.tool_exec_search)
- else -> appContext.getString(R.string.tool_exec_generic, toolName)
-                                                }
-                                                Log.d(TAG, "Tool execution started: $toolName")
-                                            }
-                                        }
-                                        toolResultChunk != null -> {
-                                            toolCallInProgress.set(false)
-                                            Log.d(TAG, "Tool result received: $toolResultChunk")
-                                            val parts = toolResultChunk.split(":", limit = 2)
-                                            if (parts.size >= 2) {
-                                                val toolName = parts[0].trim()
-                                                val status = parts[1].trim()
-                                                viewModelScope.launch {
-                                                    _toolCallState.value = ToolCallState.Result(
-                                                        toolName = toolName,
-                                                        status = if (status.contains("success", ignoreCase = true)) "success" else "error",
-                                                        resultMessage = status
-                                                    )
-                                                }
-                                                val resultMsg = when (status) {
- "success"-> appContext.getString(R.string.tool_exec_success, toolName)
- "error"-> appContext.getString(R.string.tool_exec_failed, toolName)
- else -> "$toolName: $status"
-                                                }
-                                                Log.d(TAG, "Tool execution completed: $toolName status=$status")
-                                            }
-                                        }
-                                        toolResults != null -> {
-                                            toolCallInProgress.set(false)
-                                            if (toolResults != "[]") {
-                                                toolResultsJson = toolResults
-                                                // バグ修正 (生成中にツール結果がカードに見えない):
-                                                //   以前は finalFromModelGlobal != null の persist しか toolResultsJson を DB に
-                                                //   写さなかったため、モデルが最終回答を吐き終えるまでカードを展開しても
-                                                //   result 行が “(モデルへ送信済み)” のプレースホルダーのままだった。
-                                                //   ラウンド完了ごとに エンジン側 (Gguf/LiteRt) が送ってくるため、ここで即剋に
-                                                //   toolResultsJson だけを preserve で persist する (content は他パスの
-                                                //   タイミングで写かれるのでここでは触らない)。
-                                                viewModelScope.launch(Dispatchers.IO) {
-                                                    runCatching {
-                                                        messageRepository.updateToolResultsJson(
-                                                            messageId = activeStreamingMessageId,
-                                                            toolResultsJson = toolResults
-                                                        )
-                                                    }.onFailure {
-                                                        Log.w(TAG, "live updateToolResultsJson failed id=$activeStreamingMessageId", it)
-                                                    }
-                                                }
-                                            }
-                                            Log.d(TAG, "Tool results JSON received: length=${toolResults.length}")
-                                        }
-                                        tpsValue != null -> {
-                                            // エンジン送りの TPS マーカーもクラウドでは無視する
-                                            if (!isCloudStreamModel) {
-                                                _currentTps.value = tpsValue
-                                            }
-                                        }
-                                        else -> {
-                                            val executedToolsList = InferenceStreamProtocol.decodeExecutedToolsList(seg)
-                                            if (executedToolsList != null) {
-                                                Log.d(TAG, "Executed tools list: $executedToolsList")
-                                                if (executedToolsList.isNotEmpty()) {
-                                                    val toolsDisplay = executedToolsList.joinToString(", ")
-                                                }
-                                            } else if (seg.isNotEmpty()) {
-                                                if (_toolCallState.value is ToolCallState.Result) {
-                                                    _toolCallState.value = ToolCallState.Responding
-                                                }
-                                                val currentContent = answerBuilder.toString()
-                                                if (BuildConfig.DEBUG) {
-                                                    // プライバシー保護: 生成中テキストはユーザー由来の内容を含み得るため本文は出力しない
-                                                    Log.d(TAG, "RAW_CHUNK: length=${seg.length}")
-                                                }
-                                                val merged = mergeStreamingChunk(currentContent, seg)
-                                                if (merged != currentContent && merged.length >= currentContent.length) {
-                                                    answerBuilder.clear()
-                                                    answerBuilder.append(merged)
-                                                    // Bug fix(#6): 以前は seg 全体を estimateOutputTokens に渡していたため、
-                                                    // LiteRT から「累積テキスト」が送られたケースで token 数が過大計上されていた。
-                                                    // merged と currentContent の実際の差分文字列を使ってトークン数を加算し、
-                                                    // TPS 表示を実態に一致させる。
-                                                    val deltaText = merged.substring(currentContent.length)
-                                                    tokenCount += TextTokenEstimator.estimateOutputTokens(deltaText)
- // 本文の最初のトークン到達時刻を記録。既にシンキングフェーズに入っていたら
-                                                    // その差分を thinkingElapsedMs に一度だけ収めて、シンキングフェーズを閉じる。
-                                                    if (firstAnswerAtMs == null) {
-                                                        firstAnswerAtMs = chunkArrivedAt
-                                                        thinkingStartedAtMs?.let { start ->
-                                                            val diff = chunkArrivedAt - start
-                                                            if (diff > 0L) thinkingElapsedMs += diff
-                                                            thinkingStartedAtMs = null
-                                                        }
-                                                    }
-                                                    // 修正: ライブ TPS は Thinking を含む全デコード区間
-                                                    //   (最初の出力トークンからの経過) で算出する。
-                                                    if (tokenCount >= 10f && firstOutputAtMs != null && !isCloudStreamModel) {
-                                                        val elapsed = (SystemClock.elapsedRealtime() - firstOutputAtMs!!)
-                                                            .coerceAtLeast(1L)
-                                                        _currentTps.value = (tokenCount * 1000f) / elapsed
-                                                    }
-                                                    if (BuildConfig.DEBUG) {
-                                                        Log.d(
-                                                            TAG,
-                                                            "Chunk merged: ${currentContent.length} -> ${merged.length} chars (added ${merged.length - currentContent.length} chars)"
-                                                        )
-                                                    }
-                                                    if (merged.length - currentContent.length != seg.length) {
- Log.w(TAG, "OVERLAP DETECTED: chunk=${seg.length} chars, but added only ${merged.length - currentContent.length} chars")
-                                                    }
-                                                } else if (merged.length < currentContent.length) {
- Log.w(TAG, "Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
-                                                    if (BuildConfig.DEBUG) {
-                                                        Log.w(TAG, "  original chunk: '${seg.take(80)}'")
-                                                        Log.w(TAG, "  current: '${currentContent.take(80)}'")
-                                                        Log.w(TAG, "  merged: '${merged.take(80)}'")
-                                                    }
-                                                } else if (merged == currentContent) {
-                                                    if (BuildConfig.DEBUG) {
-                                                        Log.d(TAG, "DUPLICATE_CHUNK: skipped (already present)")
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
-                                messageIdToUpdate?.let { id ->
-                                    var contentForUi: String
-                                    var thinkingForUi: String?
-                                    if (nativeThinkingStream) {
-                                        contentForUi =
-                                            sanitizeAssistantOutputForModel(
-                                                engineModelName = engineModelName,
-                                                text = Gemma4ThinkingParser.sanitizeVisibleText(
-                                                    answerBuilder.toString(),
-                                                    preserveToolCallTags = true
-                                                )
-                                            )
-                                        thinkingForUi =
-                                            Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString())
-                                                .ifBlank { null }
-                                        if (BuildConfig.DEBUG && (contentForUi.isNotEmpty() || !thinkingForUi.isNullOrBlank())) {
-                                            Log.d(TAG, "CONTENT_THINKING_STATE: content_len=${contentForUi.length} thinking_len=${thinkingForUi?.length ?: 0}")
-                                        }
-                                    } else {
-                                        // GGUF かつネイティブ chat_template 適用済みのときは、
-                                        // llama.cpp 側のパーサー (部分パース) を優先する。
-                                        // テンプレ未適用時は null が返るため Kotlin パーサーにフォールバックする。
-                                        val nativeStreamParsed =
-                                            if (isGgufEngineModel(engineModelName)) {
-                                                runCatching {
-                                                    manager.parseGgufChatOutput(
-                                                        rawForThinkParse(answerBuilder.toString()),
-                                                        isPartial = true
-                                                    )
-                                                }.getOrNull()
-                                            } else {
-                                                null
-                                            }
-                                        if (nativeStreamParsed != null) {
-                                            // バグ修正 (Thinking ON 時、最初の出力が本文に混入する):
-                                            //   llama.cpp のネイティブパーサーは thinking_forced_open な
-                                            //   テンプレート (Gemma4 等) でも、</think> を実際に検出するまでは
-                                            //   partial 解析中の reasoning_content を確定させない実装になっており
-                                            //   (未閉鎖 thinking タグを許容する既知の緩さ、
-                                            //   upstream issue #13812 / #13877 系)、その間に生成された
-                                            //   思考テキストが reasoningContent="" のまま content 側に
-                                            //   一時的に出てしまうケースがある。
-                                            //   完了時 (isPartial=false) 側は reasoningContent が空のとき
-                                            //   Kotlin パーサーで再解析して救済しているのに、ストリーミング中
-                                            //   だけこの救済が無く、Thinking ON の最初の出力がそのまま
-                                            //   本文としてユーザーに見えてしまっていた。ここでも同じ救済を行う。
-                                            // thinking の救済は「生の累積テキスト」に対して行う。ネイティブ partial 解析
-                                            // が返す content には <think> が閉じる前の時点で既に思考冒頭が混入している
-                                            // 場合があり、content だけ再解析しても取りこぼすため。
-                                            val nativeReasoningBlank = nativeStreamParsed.reasoningContent.isBlank()
-                                            val rawForNative = answerBuilder.toString()
-                                            val unmarkedThinkingPhase =
-                                                config.enableThinking &&
-                                                    !markupSpec.containsThinkingClose(rawForNative)
-                                            // 閉じタグがまだ無いあいだは llama.cpp の content を信じない。
-                                            // Granite はタグを出さず reasoningContent="" / content=全文 になる。
-                                            if (config.enableThinking &&
-                                                answerBuilder.isNotEmpty() &&
-                                                (nativeReasoningBlank || unmarkedThinkingPhase)
-                                            ) {
-                                                val salvaged = Gemma4ThinkingParser.parseStreaming(
-                                                    rawInput = rawForThinkParse(answerBuilder.toString()),
-                                                    treatUnmarkedInputAsThinking = treatUnmarkedAsThinking(
-                                                        rawForThinkParse(answerBuilder.toString()),
-                                                        streaming = true
-                                                    ),
-                                                    preserveToolCallTags = true,
-                                                    spec = markupSpec,
-                                                )
-                                                contentForUi =
-                                                    sanitizeAssistantOutputForModel(
-                                                        engineModelName = engineModelName,
-                                                        text = salvaged.answer
-                                                    )
-                                                thinkingForUi =
-                                                    salvaged.thinking?.let {
-                                                        Gemma4ThinkingParser.sanitizeVisibleText(it)
-                                                    }?.ifBlank { null }
-                                            } else {
-                                                contentForUi =
-                                                    sanitizeAssistantOutputForModel(
-                                                        engineModelName = engineModelName,
-                                                        text = Gemma4ThinkingParser.sanitizeVisibleText(
-                                                            nativeStreamParsed.content,
-                                                            preserveToolCallTags = true
-                                                        )
-                                                    )
-                                                thinkingForUi =
-                                                    Gemma4ThinkingParser.sanitizeVisibleText(
-                                                        nativeStreamParsed.reasoningContent
-                                                    ).ifBlank { null }
-                                            }
-                                        } else {
-                                        // LiteRT-LM の channel 推測は nativeThinkingStream 分岐に任せる。
-                                        // GGUF かつ Thinking ON のときだけ、開始タグなしでも閉じタグまで thinking へ先流しする。
-                                        val rawAccum = rawForThinkParse(answerBuilder.toString())
-                                        val parsedStream =
-                                            Gemma4ThinkingParser.parseStreaming(
-                                                rawInput = rawAccum,
-                                                treatUnmarkedInputAsThinking = treatUnmarkedAsThinking(
-                                                    rawAccum,
-                                                    streaming = true
-                                                ),
-                                                preserveToolCallTags = true,
-                                                spec = markupSpec,
-                                            )
-                                        // Instant / Thinking OFF 中でも、モデルが実際に <think> を吐いた場合は
-                                        // それを捨てずに UI へ表示する。本文側は従来どおり visible answer のみを使う。
-                                        val extractedThinking = parsedStream.thinking?.let {
-                                            Gemma4ThinkingParser.sanitizeVisibleText(it)
-                                        }?.ifBlank { null }
-                                        if (config.enableThinking) {
-                                            contentForUi =
-                                                sanitizeAssistantOutputForModel(
-                                                    engineModelName = engineModelName,
-                                                    text = parsedStream.answer
-                                                )
-                                            thinkingForUi = extractedThinking
-                                        } else {
-                                            // Thinking OFF 中は本文から <think> ブロックだけ除去し、
-                                            // もしモデルが思考を漏らしたら disclosure 側へそのまま載せる。
-                                            val rawNoThink = stripThinkSectionsForDisplay(answerBuilder.toString())
-                                            contentForUi =
-                                                sanitizeAssistantOutputForModel(
-                                                    engineModelName = engineModelName,
-                                                    text = Gemma4ThinkingParser.sanitizeVisibleText(
-                                                        rawNoThink,
-                                                        preserveToolCallTags = true
-                                                    )
-                                                )
-                                            thinkingForUi = extractedThinking
-                                        }
-                                        }
-                                    }
-                                    // バグ修正 (ツールカードが応答完了まで出ない):
-                                    //   ネイティブ partial パーサーはツールコール専用出力に対して
-                                    //   content="" を返し続ける (Qwen3.5 GGUF のログで
-                                    //   STREAM_INMEMORY_UPDATE contentLen=0 が <tool_call> 生成中ずっと継続)。
-                                    //   インラインカードは message.content のタグを parseSegments して描くため、
-                                    //   未完の <tool_call> も contentForUi に残す。タグ開始時点で Running、
-                                    //   ツール名が読めた時点でタイトルが埋まる。
-                                    val rawForCards = answerBuilder.toString()
-                                    val thinkingOnlyNoClose =
-                                        config.enableThinking &&
-                                            contentForUi.isEmpty() &&
-                                            !thinkingForUi.isNullOrBlank() &&
-                                            !markupSpec.containsThinkingClose(rawForCards)
-                                    // 思考中（閉じタグなし）の本文埋め戻しはしない。
-                                    // ツールカード用の復元は実際に tool マークアップがあるときだけ。
-                                    if (contentForUi.isEmpty() &&
-                                        !thinkingOnlyNoClose &&
-                                        hasStreamingToolCallMarkup(rawForCards)
-                                    ) {
-                                        contentForUi = restoreStreamingContentForToolCards(
-                                            engineModelName = engineModelName,
-                                            rawAnswer = rawForCards
-                                        )
-                                    }
-                                    if (config.enableThinking) {
-                                        val dedupedLive = ThinkingLeakSalvage.stripDuplicateThinkingFromContent(
-                                            thinking = thinkingForUi,
-                                            content = contentForUi,
-                                        )
-                                        thinkingForUi = dedupedLive.first
-                                        contentForUi = dedupedLive.second
-                                    }
-
-                                    lastStreamContentForFinal = contentForUi
-                                    lastStreamThinkingForFinal = thinkingForUi
-                                    if (contentForUi.isNotBlank() &&
-                                        !thinkingForUi.isNullOrBlank() &&
-                                        contentForUi.trim() != thinkingForUi.trim()
-                                    ) {
-                                        lastGoodStreamContent = contentForUi
-                                        lastGoodStreamThinking = thinkingForUi
-                                    }
-
-                                    val now = SystemClock.elapsedRealtime()
-                                    val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
-                                        STREAM_PERSIST_INTERVAL_TABLE_MS
-                                    } else {
-                                        STREAM_PERSIST_INTERVAL_MS
-                                    }
-                                    val isFirstVisibleContent =
-                                        contentForUi.isNotEmpty() && lastPersistedContent.isEmpty()
-                                    val isFirstThinkingPersist =
-                                        !thinkingForUi.isNullOrBlank() && lastPersistedThinking.isNullOrBlank()
-                                    // Thinking フェーズのみで content が空の場合は persist を遅延させる
-                                    // （content が来た時、または最終確定時のみ persist する）
-                                    val isThinkingOnlyPhase = contentForUi.isEmpty() && !thinkingForUi.isNullOrBlank()
-                                    // Bug fix (開始タグを出さないモデルで Thinking 欄と本文欄が高速で入れ替わる):
-                                    //   Qwen 3.5 系は開始タグを省略して思考本文だけを吐くため、終端タグ到達までは
-                                    //   チャンクが全て content 側として persist される。終端タグ到達後にパーサーが
-                                    //   全文を thinking 側へ移し替えると contentForUi は空に戻るが、そのまま
-                                    //   空 content を persist すると、Room Flow が「思考=本文」「思考=Thinking欄」の
-                                    //   スナップショットを交互に再配信し、カードの高さが伸び縮みを繰り返して見える。
-                                    //   Thinking のみのフェーズでは空 content への置き換えを DB へ書かず、
-                                    //   最終的な退避は finally の ThinkingLeakSalvage 経路に任せる。
-                                    val suppressThinkingOnlyEmptyContentPersist =
-                                        isThinkingOnlyPhase && lastPersistedContent.isNotEmpty()
- // Bug fix(#Thinking-Realtime-1):
-                                    //   旧実装は Thinking のみのフェーズ中は shouldPersistToDb=false で in-memory 更新のみ
-                                    //   行っていたが、その直後に Room の messagesCollectionJob 側の Flow が古い
-                                    //   スナップショット (thinkingContent=null, isStreaming=true) を配信してきて、
-                                    //   in-memory 更新をすぐ上書きしていたため、UI にリアルタイム表示されない
-                                    //   ケースがあった。 Thinking の更新も定期的に DB へ persist することで、
-                                    //   Flow 経由の再配信でも Thinking 内容を保持する。
-                                    val thinkingChangedSinceLastPersist =
-                                        thinkingForUi != lastPersistedThinking
-                                    val shouldPersistToDb =
-                                        if (suppressThinkingOnlyEmptyContentPersist) {
-                                            false
-                                        } else if (isThinkingOnlyPhase) {
-                                            // Thinking のみでも、初回、または一定間隔経過、または最終確定時は persist する。
-                                            thinkingChangedSinceLastPersist && (
-                                                finalFromModelGlobal != null ||
-                                                    isFirstThinkingPersist ||
-                                                    now - lastPersistAt >= persistInterval
-                                            )
-                                        } else {
-                                            // Content が存在すれば通常の persist ロジック。
-                                            // Bug fix(#streaming-persist-debounce):
-                                            //   トークン1個ごとに DB 更新・Flow 再発行・再バインドが
-                                            //   走っていたため、定期 persist は「一定時間経過」かつ
-                                            //   「本文が STREAM_PERSIST_MIN_CHARS 以上増えたか
-                                            //   Thinking が変化した」ときだけに間引く。
-                                            (contentForUi != lastPersistedContent ||
-                                                thinkingForUi != lastPersistedThinking) &&
-                                                (finalFromModelGlobal != null ||
-                                                    isFirstVisibleContent ||
-                                                    isFirstThinkingPersist ||
-                                                    (now - lastPersistAt >= persistInterval &&
-                                                        (contentForUi.length - lastPersistedContent.length >= STREAM_PERSIST_MIN_CHARS ||
-                                                            thinkingForUi != lastPersistedThinking)))
-                                        }
-                                    if (shouldPersistToDb) {
-                                        messageRepository.updateMessageContent(
-                                            messageId = id,
-                                            content = contentForUi,
-                                            isStreaming = finalFromModelGlobal == null,
-                                            thinkingContent = thinkingForUi,
-                                            toolResultsJson = toolResultsJson
-                                        )
-                                        lastPersistedContent = contentForUi
-                                        lastPersistedThinking = thinkingForUi
-                                        lastPersistAt = now
-                                    }
- // Bug fix(#Thinking-Realtime-2):
-                                    //   persist 間隔の合間でも UI へは即座に反映する必要があるため、
-                                    //   Thinking フェーズかどうかに関わらず _messages を in-memory 更新する。
-                                    //   Room Flow 再配信で古いスナップショットが届いても、次の persist で
-                                    //   thinkingContent が保存されているため上書きされない。
-                                    if (!shouldPersistToDb) {
-                                        if (BuildConfig.DEBUG) {
-                                            Log.d(
-                                                TAG,
-                                                "STREAM_INMEMORY_UPDATE: id=$id contentLen=${contentForUi.length} " +
-                                                    "thinkingLen=${thinkingForUi?.length ?: 0} thinkingOnly=$isThinkingOnlyPhase"
-                                            )
-                                        }
-                                        val currentMsgs = _messages.value.toMutableList()
-                                        val idx = currentMsgs.indexOfFirst { it.id == id }
-                                        if (idx >= 0) {
-                                            // persist 間引き中も content / thinkingContent を UI へ即時反映する。
-                                            // isStreaming=true を維持しないと MessageAdapter が生成完了と誤認し、
-                                            // Thinking トグル行が出てしまう。
-                                            val original = currentMsgs[idx]
-                                            val updated = original.copy(
-                                                content = contentForUi,
-                                                thinkingContent = thinkingForUi,
-                                                isStreaming = true
-                                            )
-                                            currentMsgs[idx] = updated
-                                            _messages.value = currentMsgs.toList()
-                                        } else if (BuildConfig.DEBUG) {
-                                            Log.w(TAG, "STREAM_INMEMORY_UPDATE: could not find message id=$id in ${currentMsgs.map { it.id }}")
-                                        }
-                                    }
-                                }
-                                if (BuildConfig.DEBUG) Log.d(TAG, "Received chunk: $chunk")
-                            }
-                        } finally {
-                            generationEndAtMs = SystemClock.elapsedRealtime()
-                            firstTokenTimeoutJob.cancel()
-                            stallWatchJob.cancel()
-                            Log.d(TAG, "Flow collection completed")
-                        }
-                    }
-                }
-            } catch (collectionError: Throwable) {
-                when {
-                    collectionError is FirstTokenTimeoutException -> {
-                        Log.d(TAG, "First token timeout during flow collection")
-                    }
-                    collectionError is GenerationStalledException -> {
-                        Log.w(TAG, "Generation stalled (no chunks); finalizing partial", collectionError)
-                        streamAbortNote =
-                            appContext.getString(R.string.gen_truncated_stall_notice)
-                        withContext(Dispatchers.Main) {
- _uiMessage.emit(appContext.getString(R.string.vm_response_paused_saved))
-                        }
-                        // バグ修正 (LiteRT-LM: ストール後も次回送信で再度ハングする):
-                        //   cancelInference()/cancelProcess() は upstream の完全デッドロック状態には
-                        //   効かないことがある (google-ai-edge/LiteRT-LM#2202)。stallWatchJob が
-                        //   検知した時点で :litert プロセスごと強制終了し、次回送信では
-                        //   確実に新しい Conversation で再スタートさせる。GGUF はこの経路の対象外
-                        //   (recoverFromStalledLiteRtInference 内で isLiteRtEngine 相当の判定を行う)。
-                        if (isLiteRtEngine) {
-                            runCatching {
-                                requireModelManager().recoverFromStalledLiteRtInference()
-                            }.onFailure {
-                                Log.w(TAG, "recoverFromStalledLiteRtInference failed after stall", it)
-                            }
-                        }
-                    }
-                    collectionError is GenerationWallTimeoutException -> {
-                        Log.w(TAG, "Generation wall timeout; finalizing partial", collectionError)
-                        streamAbortNote =
-                            appContext.getString(R.string.gen_truncated_time_notice)
-                        withContext(Dispatchers.Main) {
- _uiMessage.emit(appContext.getString(R.string.vm_response_gen_time_limit))
-                        }
-                        // 上と同じ理由。壁時計タイムアウト側でも念のため回復させる。
-                        if (isLiteRtEngine) {
-                            runCatching {
-                                requireModelManager().recoverFromStalledLiteRtInference()
-                            }.onFailure {
-                                Log.w(TAG, "recoverFromStalledLiteRtInference failed after wall timeout", it)
-                            }
-                        }
-                    }
-                    collectionError is UserStopCancellationException -> {
-                        collectionCancelledByUser = true
-                        Log.d(TAG, "Flow collection was cancelled by user stop")
-                    }
-                    else -> {
-                        Log.e(TAG, "Error during flow collection", collectionError)
-                        throw collectionError
-                    }
-                }
-            }
-
-            val completeResponse: String
-            val finalThinking: String?
-            // 生成中と同じ splitter で raw を再分割する。sanitize は分割後にだけかける。
-            val finalParsed = Gemma4ThinkingParser.parse(
-                rawInput = rawForThinkParse(answerBuilder.toString()),
-                treatUnmarkedInputAsThinking = treatUnmarkedAsThinking(
-                    rawForThinkParse(answerBuilder.toString()),
-                    streaming = false
-                ),
-                preserveToolCallTags = true,
-                spec = markupSpec,
-            )
-            val previousThinkingForFinal =
-                lastGoodStreamThinking?.takeIf { lastGoodStreamContent.isNotBlank() }
-                    ?: lastStreamThinkingForFinal
-            val previousContentForFinal =
-                lastGoodStreamContent.takeIf { it.isNotBlank() }
-                    ?: lastStreamContentForFinal
-            val restoredMerged = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
-                previousThinking = previousThinkingForFinal,
-                previousContent = previousContentForFinal,
-                newThinking = finalParsed.thinking,
-                newContent = finalParsed.answer,
-            )
-            val restored = ThinkingLeakSalvage.restoreUnmarkedAnswerIfNoThinkBoundary(
-                thinking = restoredMerged.first,
-                content = restoredMerged.second,
-                raw = rawForThinkParse(answerBuilder.toString()),
-                spec = markupSpec,
-                implicitPrefill = implicitThinkPrefill || promptOpenedThink,
-                keepUnmarkedAsThinking = config.enableThinking,
-            )
-            val deduped = ThinkingLeakSalvage.stripDuplicateThinkingFromContent(
-                thinking = restored.first,
-                content = restored.second,
-            )
-            // 完了時に再パース結果でストリーム表示を丸ごと差し替えない。
-            // 差分がある場合でもストリーム中に見えていた本文を優先し、ガクつきを防ぐ。
-            val streamedThinking = (
-                lastGoodStreamThinking?.takeIf { it.isNotBlank() }
-                    ?: lastStreamThinkingForFinal?.takeIf { it.isNotBlank() }
-                    ?: deduped.first
-                )
-                ?.let { Gemma4ThinkingParser.sanitizeVisibleText(it) }
-                ?.ifBlank { null }
-            val streamedContent = lastGoodStreamContent.takeIf { it.isNotBlank() }
-                ?: lastStreamContentForFinal.takeIf { it.isNotBlank() }
-                ?: deduped.second
-            completeResponse = sanitizeAssistantOutputForModel(
-                engineModelName = engineModelName,
-                text = Gemma4ThinkingParser.sanitizeVisibleText(
-                    if (config.enableThinking) streamedContent
-                    else stripThinkSectionsForDisplay(streamedContent),
-                    preserveToolCallTags = true
-                ).ifBlank {
-                    // Thinking ON で思考側に本文相当が既にあるなら、空の本文へ
-                    // lastPersistedContent を埋め戻して重複表示しない。
-                    if (config.enableThinking && !streamedThinking.isNullOrBlank()) ""
-                    else lastPersistedContent
-                }
-            )
-            finalThinking = streamedThinking
-            // 完了前の停止で、タグの無い途中出力を Thinking 枠へ入れない。
-            val stoppedThinking = if (!collectionCancelledByUser) {
-                finalThinking
-            } else if (markupSpec.containsThinkingOpen(answerBuilder.toString()) ||
-                markupSpec.containsThinkingOpen(finalThinking.orEmpty())
-            ) {
-                finalThinking
-            } else {
-                null
-            }
-            val note = streamAbortNote
-            val stoppedWithoutPayload =
-                collectionCancelledByUser && completeResponse.isEmpty() && stoppedThinking.isNullOrEmpty()
-            val stoppedDuringThinkingOnly =
-                collectionCancelledByUser && completeResponse.isEmpty() && !stoppedThinking.isNullOrEmpty()
-            val contentToSave =
-                when {
-                    stoppedWithoutPayload -> ""  // 空の場合は空文字列を保存（後でフォールバックメッセージに置換）
-                    stoppedDuringThinkingOnly -> appContext.getString(R.string.assistant_stopped_by_user)
-                    note == null -> completeResponse
-                    completeResponse.isNotEmpty() -> completeResponse + note
-                    else -> note.trim()
-                }
-
- // ユーザー停止時はツール実行結果カードとして保存
-            val finalToolResultsJson =
-                if (collectionCancelledByUser) withUserStopCard(toolResultsJson) else toolResultsJson
-
-            val hasPayload =
-                contentToSave.isNotEmpty() || !stoppedThinking.isNullOrEmpty()
-
-            Log.d(TAG, "generateAIResponse finalization: hasPayload=$hasPayload, activeStreamingMessageId=$activeStreamingMessageId, completeResponse.len=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}")
-
- // TTFT: 送信・推論開始から最初の (シンキングも含む) トークンまでの時間。
-            //   generationStartAtMs 相当のベースラインとして requestStartedAtMs を参照したいが、
-            //   当スコープでは firstOutputAtMs を得ているのでストリーミング開始 (streamStartedAtMs) を別途使う。
-            //   ここでは streamStartedAtMs の代わりに activeStreamingMessageId 取得直後の基準時刻を →
-            //   値がなければ firstOutputAtMs 相当を利用 (この場合 TTFT = 0)。
-            val ttftMs: Long? = firstOutputAtMs?.let { first ->
-                val start = streamStartedAtMs
-                if (start != null && first >= start) (first - start).coerceAtLeast(0L) else null
-            }
- // 修正: Thinking も生成トークンとして計上する方針に統一したため、
-            //   分母の生成時間も Thinking を含む全デコード区間
-            //   (最初の出力トークン → 終了) とする。
-            //   (旧: Thinking 時間を差し引いていたが、分子のトークン数に Thinking が
-            //    含まれていなかったため分子分母が不一致で TPS が不正確だった)
-            val generationTimeMs = firstOutputAtMs?.let { first ->
-                val end = generationEndAtMs ?: SystemClock.elapsedRealtime()
-                (end - first).coerceAtLeast(0L)
-            }
-            // トークン速度正確化:
-            //   LiteRT-LM は getBenchmarkInfo() の実測デコード TPS / トークン数を優先する。
-            //   (enableBenchmark=true で初期化済み。推論完了時にエンジン側が記録する)
-            //   文字数ヒューリスティック (TextTokenEstimator) より正確。
-            // クラウドモデルは LiteRT-LM ではないため、実測ベンチマーク問い合わせの対象外。
-            // (以前はクラウドも「非 GGUF = LiteRT」と誤判定され、Binder 経由で LiteRT 側の
-            //  前回ベンチマーク値をクラウド応答の TPS として拾う可能性があった)
-            val isCloudModelHere =
-                com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
-            val isLiteRtEngineHere = !isGgufEngineModel(engineModelName) && !isCloudModelHere
-            val litertExactTps = if (isLiteRtEngineHere) manager.getLastDecodeTpsSync() else null
-            val litertExactDecodeTokens = if (isLiteRtEngineHere) manager.getLastDecodeTokenCountSync() else null
-            val tps = if (generationTimeMs != null && generationTimeMs > 0L) {
-                val tokensAfterFirst = if (isGgufEngineModel(engineModelName)) {
-                    val nativeTokens = manager.getLastGenerationTokenCount()
-                    (nativeTokens?.minus(1f))?.coerceAtLeast(0f)
-                        ?: (tokenCount - 1f).coerceAtLeast(0f).takeIf { tokenCount > 0f }
-                        ?: (TextTokenEstimator.estimateOutputTokens(
-                            completeResponse + (finalThinking ?: "")
-                        ) - 1f).coerceAtLeast(0f)
-                } else {
-                    // LiteRT-LM: 実測デコードトークン数 (Thinking 含む) を優先、
-                    //   なければストリーム計上値 (Thinking 含む)、最後に文字数推定
-                    litertExactDecodeTokens?.let { (it - 1).toFloat().coerceAtLeast(0f) }
-                        ?: (tokenCount - 1f).coerceAtLeast(0f).takeIf { tokenCount > 0f }
-                        ?: (TextTokenEstimator.estimateOutputTokens(
-                            completeResponse + (finalThinking ?: "")
-                        ) - 1f).coerceAtLeast(0f)
-                }
-                if (tokensAfterFirst > 0f) {
-                    tokensAfterFirst * 1000f / generationTimeMs
-                } else {
-                    null
-                }
-            } else {
-                null
-            }
-            // LiteRT-LM: ネイティブ実測 TPS が取れた場合はそちらを優先する
-            // クラウドモデルでは TPS を表示しない。ネットワーク往復・レート制限待ちを含む
-            // 見かけ速度はオンデバイスの tok/s と意味が異なり誤解を招くため null を保存する。
-            val finalTps = if (isCloudModelHere) null else (litertExactTps ?: tps)
-
-            Log.d(TAG, "Inference collection completed: hasPayload=$hasPayload, completeResponse.length=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}, generationTimeMs=$generationTimeMs, tps=$tps finalTps=$finalTps")
-
-            // コンテキストメーター正確化: 推論完了時点の KV 実測値 (画像・音声含む) で更新し、
-            // セッションに永続化する (アプリ再起動後の復元用)。
-            // クラウドモデルではローカル KV の実測値は存在しない。前回ローカル推論の
-            // 残り値をクラウドセッションへ誤って保存すると、セッション移動時に
-            // 別セッションのコンテキスト量がメーターへ表示される原因になるため保存しない。
-            val isCloudCompletion =
-                com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
-            if (!isCloudCompletion) runCatching {
-                val exactContextTokens = manager.getCurrentContextTokenCountSync()
-                val mediaTokens = manager.getLastPromptTokenInfoSync()?.second ?: _contextMediaTokens.value
-                // バグ修正 (Thinking がコンテキストメーターに含まれない):
-                //   KV 実測値には Thinking チャンネルのデコード分が含まれないため、
-                //   最終 thinkingContent を推定トークン化して加算し、実際のセッション
-                //   コンテキスト量に近づける。
-                val thinkingTokens =
-                    TextTokenEstimator.estimateOutputTokens(finalThinking ?: "").toInt().coerceAtLeast(0)
-                val generatedEstimate = TextTokenEstimator.estimateOutputTokens(
-                    completeResponse + (finalThinking ?: "")
-                ).toInt().coerceAtLeast(0)
-                val decodeTokens = if (isLiteRtEngineHere) {
-                    manager.getLastDecodeTokenCountSync()?.takeIf { it > 0 }
-                } else {
-                    null
-                }
-                val generatedTokens = decodeTokens ?: generatedEstimate
-                val prefillTokens = if (isLiteRtEngineHere) {
-                    manager.getLastPromptTokenInfoSync()?.first?.takeIf { it > 0 }
-                } else {
-                    null
-                }
-                // llama.cpp は n_past がプロンプト以下のとき生成分を含んでいない。
-                // LiteRT-LM は getTokenCount が取れない回があるので prefill+decode に落とす。
-                val totalTokens = when {
-                    exactContextTokens != null && exactContextTokens > 0 &&
-                        (prefillTokens == null || exactContextTokens > prefillTokens) ->
-                        exactContextTokens + thinkingTokens
-                    prefillTokens != null -> prefillTokens + generatedTokens
-                    exactContextTokens != null && exactContextTokens > 0 ->
-                        exactContextTokens + generatedTokens
-                    else -> _contextUsageTokens.value + generatedTokens
-                }
-                if (isCurrentContextSession(sessionId)) {
-                    applyMeterAfterSend(
-                        manager,
-                        engineModelName,
-                        totalTokens,
-                        mediaTokens,
-                        generatedTokens
-                    )
-                }
-                // メーター計算はプロセス内だけ。アプリを閉じたら捨てる。
-                Log.d(TAG, "CONTEXT_METER: exact context tokens=$exactContextTokens (media=$mediaTokens generated=$generatedTokens) session=$sessionId")
-            }.onFailure { Log.w(TAG, "persist context tokens failed", it) }
-
-            val finalizationContext =
-                if (collectionCancelledByUser) Dispatchers.IO + NonCancellable else Dispatchers.IO
-
-            if (hasPayload) {
-                withContext(finalizationContext) {
-                    Log.d(TAG, "Updating message content with final response")
-                    messageRepository.updateMessageContent(
-                        messageId = activeStreamingMessageId,
-                        content = (contentToSave).ifBlank {
-                        // Thinking ON で思考だけ出た場合は raw を本文へ埋め戻さない。
-                        // Granite 等はタグが無いので stripThink しても全文が本文になり、
-                        // thinkingContent と二重表示される。
-                        if (config.enableThinking && !stoppedThinking.isNullOrBlank() && !collectionCancelledByUser) {
-                            ""
-                        } else {
-                            stripThinkSectionsForDisplay(answerBuilder.toString()).trim()
-                        }
-                    },
-                        isStreaming = false,
-                        thinkingContent = if (collectionCancelledByUser) stoppedThinking else finalThinking,
-                        toolResultsJson = finalToolResultsJson,
-                        generationTps = finalTps,
-                        generationTimeMs = generationTimeMs,
-                        ttftMs = ttftMs
-                    )
-                    normalCompletionPersisted = true
-                    if (!finalToolResultsJson.isNullOrBlank() && finalToolResultsJson != "[]") {
-                        runCatching {
-                            val db = NezumiAiDatabase.getInstance(appContext)
-                            ToolCallHistoryRepository(
-                                db.toolCallHistoryDao(),
-                                db.chatSessionDao()
-                            ).recordFromToolResultsJson(
-                                sessionId = sessionId,
-                                messageId = activeStreamingMessageId,
-                                toolResultsJson = finalToolResultsJson
-                            )
-                        }.onFailure { e ->
-                            Log.w(TAG, "Failed to record tool call history", e)
-                        }
-                    }
-                    Log.d(TAG, "Message content update complete")
-                }
-                // Bug fix(#finalization-jank): 以前はタイトル生成・タイトル再読み込み・
-                //   メモリ抽出投入を本文確定と直列で実行しており、推論完了直後の
-                //   全文確定 + 再描画と重なって UI が一瞬固まっていた。メッセージ本文の
-                //   確定 (上の updateMessageContent) だけを同期的に待ち、残りは確定描画の
-                //   後追いとなる別コルーチンへ遅延させる。
-                viewModelScope.launch(Dispatchers.IO) {
-                    if (contentToSave.isNotEmpty() && !stoppedWithoutPayload) {
-                        Log.d(TAG, "Generating session title")
-                        maybeGenerateSessionTitle(sessionId, userMessage, contentToSave)
-                        Log.d(TAG, "Session title generation complete")
-                    }
-                    syncSessionTitleFromDb(sessionId)
-                    Log.d(TAG, "Session title sync complete")
-                    if (!stoppedWithoutPayload) {
-                        enqueueMemoryExtraction(sessionId)
-                        Log.d(TAG, "Memory extraction enqueued")
-                    }
-                }
-                if (BuildConfig.DEBUG) {
-                    // プライバシー保護: AI応答は記憶内容等を含み得るため本文は出力しない
-                    Log.d(TAG, "AI response saved to database: length=${completeResponse.length}")
-                }
-            } else {
-                Log.w(TAG, "No payload generated, saving default message")
-                // ユーザー停止で何も出力が無かった場合は「生成を停止しました」を表示し、
-                // 空出力エラーダイアログは表示しない。
-                val emptyExplanation = if (collectionCancelledByUser) {
-                    appContext.getString(R.string.assistant_stopped_by_user)
-                } else {
-                    messageForEmptyInferencePayload(hasMediaInput, engineModelName)
-                }
-                if (!collectionCancelledByUser) {
-                    withContext(Dispatchers.Main) {
-                        _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                            title = appContext.getString(R.string.assistant_error_empty_output_title),
-                            message = emptyExplanation,
-                            details = if (engineModelName.isNotBlank()) appContext.getString(R.string.model_error_detail_with_engine, engineModelName) else null
-                        )
-                    }
-                }
-                withContext(finalizationContext) {
-                    messageRepository.updateMessageContent(
-                        messageId = activeStreamingMessageId,
-                        content = emptyExplanation,
-                        isStreaming = false,
-                        thinkingContent = null
-                    )
-                    normalCompletionPersisted = true
-                    Log.d(TAG, "Empty payload message saved to DB")
-                    syncSessionTitleFromDb(sessionId)
-                    Log.d(TAG, "Session title sync complete (empty payload)")
-                }
-            }
-        } catch (t: Throwable) {
-            if (t is FirstTokenTimeoutException) {
-                val id = streamingMessageId
-                if (id != null) {
-                    messageRepository.updateMessageContent(
-                        messageId = id,
-                        content = appContext.getString(R.string.vm_response_start_timeout),
-                        isStreaming = false,
-                        thinkingContent = null
-                    )
-                    normalCompletionPersisted = true
-                }
-                withContext(Dispatchers.Main) {
- _uiMessage.emit(appContext.getString(R.string.vm_response_timeout))
-                }
-                return
-            }
-            if (t is CancellationException) {
-                val id = streamingMessageId
-                if (id != null) {
-                    withContext(Dispatchers.IO + NonCancellable) {
- // 既存の内容を取得して保存（上書きしない）
-                        val current = messageRepository.getMessageById(id)
-                        val existingContent = current?.content?.trim() ?: ""
-                        // Bug fix(#47) + Granite タグ無し:
-                        //   閉じタグがある場合は従来どおり content から <think> を剥がす。
-                        //   タグが無い場合は content を Thinking へ移し、すでに Thinking に
-                        //   ある本文は二重に足さない。
-                        val stopSpec = runCatching {
-                            GgufFormatResolver.resolveMarkupSpec(
-                                currentEngineModelName.orEmpty(),
-                                appContext
-                            )
-                        }.getOrDefault(ChatMarkupSpec.DEFAULT)
-                        val stopEnableThinking =
-                            stopSpec.containsThinkingOpen(existingContent) ||
-                                stopSpec.containsThinkingOpen(current?.thinkingContent.orEmpty())
-                        val (contentAfterThinkStrip, salvagedThinking) =
-                            ThinkingLeakSalvage.resolveStopWithoutThinkTags(
-                                persistedContent = existingContent,
-                                persistedThinking = current?.thinkingContent,
-                                enableThinking = stopEnableThinking,
-                                spec = stopSpec,
-                            )
-                        val mergedThinkingRaw = salvagedThinking
-                        val finalThinking = closePartialThinking(mergedThinkingRaw)
-
-                        // Bug fix(#47) 仕様変更:
-                        //   シンキング中 (本文がまだ一字も出ていない状態) で停止されたときは、
-                        //   本文欄には「生成を停止しました」と表示し、Thinking フェーズは普段通り
-                        //   (折りたたみで見える) のままにしておく。
-                        //   これによりユーザーは「どこまで思考してキャンセルされたか」を後から確認できる。
-                        val stoppedDuringThinking =
-                            contentAfterThinkStrip.isEmpty() && !finalThinking.isNullOrBlank()
-
-                        val finalContent = when {
-                            stoppedDuringThinking ->
-                                appContext.getString(R.string.assistant_stopped_by_user)
-                            contentAfterThinkStrip.isNotEmpty() ->
-                                // 停止時の「途中 assistant 出力」を表示上閉じるための終端補完。
-                                //   コードフェンスの未閉鎖によるレンダリング崩れを防ぐ。
-                                closePartialAssistantContent(contentAfterThinkStrip)
-                            else -> ""  // 空の場合は空文字列（後でフォールバックメッセージに置換）
-                        }
-
-                        val updatedToolResultsJson = withUserStopCard(current?.toolResultsJson)
-
-                        messageRepository.updateMessageContent(
-                            messageId = id,
-                            content = finalContent,
-                            isStreaming = false,
-                            thinkingContent = finalThinking,
-                            toolResultsJson = updatedToolResultsJson
-                        )
-                        normalCompletionPersisted = true
-                    }
-                }
- // 停止直後はネイティブ KV に途中トークンが残っているため、
-                //   次回推論開始前に必ずクリアさせる。実際のクリアは stopGenerationInternal
-                //   と、次回 inference へのエントリで二重に守られる。
-                runCatching { requireModelManager().requestForceClearBeforeNextInference() }
-                    .onFailure { Log.w(TAG, "requestForceClearBeforeNextInference (on cancel) failed", it) }
-                Log.d(TAG, "Generation cancelled: ${t.message}")
-                return
-            }
-            val e = if (t is Exception) t else RuntimeException(t)
-            Log.e(TAG, "Error generating AI response", e)
-
-            // エラーメッセージを詳細化
-            val errorMessage = when {
-                e.message?.contains("Web用モデル") == true ->
-                    appContext.getString(R.string.web_model_unsupported)
-                e.message?.contains("END header") == true || e.message?.contains("zip END header") == true ->
-                    appContext.getString(R.string.model_task_incomplete_download)
-                e.message?.contains("ZIPファイルが破損") == true ->
-                    appContext.getString(R.string.model_task_corrupted)
-                e.message?.contains("Unable to open zip archive") == true ->
-                    appContext.getString(R.string.model_file_corrupted_generic)
-                e.message?.contains("ZIP archive") == true ->
-                    appContext.getString(R.string.model_integrity_check_failed)
-                e.message?.contains("Model not loaded") == true ->
-                    appContext.getString(R.string.model_load_error_short)
-                else -> appContext.getString(R.string.model_generic_error, e.message ?: appContext.getString(R.string.unknown_error))
-            }
-            // 従来は errorMessage を assistant レコードの content に書き込んでいたため、
-            // LiteRT-LM の一部エラーが「エラーウィンドウに完全には出ず、チャット履歴に
-            // 残ってしまう」現象になっていた (Snackbar は 30 文字の短い途中例外のみ)。
-            // 以下の素早リターン判定に当てはまるケースだけ assistant レコードへ上書きし、
-            // それ以外は DB を汚さないでモーダル (_modelErrorDialogMessage) で見せる。
-            val looksLikeInferenceError = e.message?.let { msg ->
-                msg.contains("Failed to invoke the compiled model", ignoreCase = true) ||
-                        msg.contains("Status Code:", ignoreCase = true) ||
-                        msg.contains("TF_LITE_AUX", ignoreCase = true) ||
-                        msg.contains("not found", ignoreCase = true) ||
-                        msg.contains("OpenCL", ignoreCase = true) ||
-                        msg.contains("Vulkan", ignoreCase = true) ||
-                        msg.contains("NPU", ignoreCase = true) ||
-                        msg.contains("IllegalStateException", ignoreCase = true)
-            } ?: false
-            val id = streamingMessageId
-            if (looksLikeInferenceError) {
-                // ストリーミング途中の付け飛ばしレコードがあれば削除して履歴を汚さない。
-                if (id != null) {
-                    runCatching { messageRepository.deleteMessageById(id) }
-                        .onFailure { Log.w(TAG, "Failed to delete streaming error placeholder id=$id", it) }
-                    normalCompletionPersisted = true
-                }
-                // Bug fix (Status Code: 3 tool-call パース失敗後に生成中のまま):
-                //   finally でも落とすが、モーダル表示時点で同期的に UI 状態を戻す。
-                //   LiteRT は壊れた Conversation が残りやすいので回復も試みる。
-                _isLoading.value = false
-                _toolCallState.value = null
-                runCatching {
-                    requireModelManager().recoverFromStalledLiteRtInference()
-                }.onFailure {
-                    Log.w(TAG, "recoverFromStalledLiteRtInference failed after inference error", it)
-                }
-                withContext(Dispatchers.Main) {
-                    _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = appContext.getString(R.string.inference_error_title),
-                        message = appContext.getString(R.string.inference_error_body),
-                        details = e.message
-                    )
-                }
-            } else {
-                if (id != null) {
-                    messageRepository.updateMessageContent(
-                        messageId = id,
-                        content = errorMessage,
-                        isStreaming = false,
-                        thinkingContent = null
-                    )
-                    normalCompletionPersisted = true
-                } else {
-                    messageRepository.addMessage(
-                        sessionId = sessionId,
-                        role = "assistant",
-                        content = errorMessage
-                    )
-                }
-                // エラーを UI に通知
-                withContext(Dispatchers.Main) {
- _uiMessage.emit(" "+ (e.message?.take(30) ?: appContext.getString(R.string.vm_generic_error_short)))
-                }
-            }
-        } finally {
-            Log.d(TAG, "generateAIResponse finally entered")
-            if (heldMeterSessionId == sessionId) {
-                holdContextMeterDuringGeneration = false
-                heldMeterSessionId = null
-            }
-            // Ensure cleanup runs even if the coroutine job was cancelled.
-            withContext(NonCancellable) {
-                streamingAssistantMessageIdForTools = null
-                // Safety fallback: if the streaming message still exists and is still marked as streaming,
-                // clear the flag so the UI does not stay stuck in "生成中".
-                // Bug fix: 上記の各正常完了/エラー/キャンセルパスは既に isStreaming=false を
-                //   明示的に persist 済みなので、ここでの DB 再読み込みベースの判定を通す必要が
-                //   ない。normalCompletionPersisted が立っている場合はこの safety fallback を
-                //   完全にスキップする。これにより、正常完了直後の DB 反映タイミングのズレで
-                //   誤って ThinkingLeakSalvage が発火し、分離済みの thinking が本文へ
-                //   再混入する不具合を防ぐ。この fallback はあくまで「どの完了パスも通らずに
-                //   コルーチンが終わった」真の異常系だけを対象にする。
-                if (!normalCompletionPersisted && streamingMessageId != null) {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            val current = messageRepository.getMessageById(streamingMessageId)
-                            if (current?.isStreaming == true) {
-                                Log.w(
-                                    TAG,
-                                    "generateAIResponse finally: message $streamingMessageId still streaming after completion, clearing flag"
-                                )
-                                // Bug fix (開始タグを出さないモデルの思考が本文に残る):
-                                //   Qwen 3.5 系は開始タグを省略するため、ストリーミング中は
-                                //   思考本文が content 側に persist される。終端タグ未到達のまま
-                                //   収束した場合は content に思考が残ったままになるので、
-                                //   ThinkingLeakSalvage で思考ブロックを thinkingContent 側へ退避する。
-                                val stopSpec = runCatching {
-                                    GgufFormatResolver.resolveMarkupSpec(
-                                        currentEngineModelName.orEmpty(),
-                                        appContext
-                                    )
-                                }.getOrDefault(ChatMarkupSpec.DEFAULT)
-                                val stopEnableThinking =
-                                    stopSpec.containsThinkingOpen(current.content) ||
-                                        stopSpec.containsThinkingOpen(current.thinkingContent.orEmpty())
-                                val salvaged = ThinkingLeakSalvage.resolveStopWithoutThinkTags(
-                                    persistedContent = current.content,
-                                    persistedThinking = current.thinkingContent,
-                                    enableThinking = stopEnableThinking,
-                                    spec = stopSpec,
-                                )
-                                val salvagedContent = salvaged.first
-                                val salvagedThinking = salvaged.second
-                                messageRepository.updateMessageContent(
-                                    messageId = streamingMessageId,
-                                    content = salvagedContent.ifBlank {
-                                        if (salvagedThinking.isNullOrBlank()) {
-                                            messageForEmptyInferencePayload(
-                                                currentHasMediaInput,
-                                                currentEngineModelName ?: ""
-                                            )
-                                        } else {
-                                            ""
-                                        }
-                                    },
-                                    isStreaming = false,
-                                    thinkingContent = closePartialThinking(salvagedThinking)
-                                )
-                            }
-                        }
-                    } catch (t: Throwable) {
-                        Log.e(TAG, "Failed to clear streaming flag on message $streamingMessageId", t)
-                    }
-                }
-
-                // Bug fix(#5): 過去ターンの画像をロードした Bitmap を recycle する。
-                pastHistoryBitmapsToRecycle.forEach { bmp ->
-                    if (!bmp.isRecycled) {
-                        runCatching { bmp.recycle() }
-                    }
-                }
-                pastHistoryBitmapsToRecycle.clear()
-
-                // Gallery パターン: 全パスで _isLoading を false にする
-                Log.d(TAG, "Generation concluded, setting isLoading=false")
-                _isLoading.value = false
-
-                // Tool Call State マシンを Done に設定
-                _toolCallState.value = ToolCallState.Done
-                _currentTps.value = null
-
-                // Phase 11: 全体のロード時間をログ出力
-                val aiTotalMs = System.currentTimeMillis() - aiStartMs
-                Log.d(TAG, "generateAIResponse TOTAL_DURATION: ${aiTotalMs}ms (model load, inference, and all processing)")
-
-                // Release WakeLock when generation completes
-                releaseScreenWakeLock()
-            }
-        }
-    }
 
     /**
  * ユーザー停止 / 例外で生成が途中で折れた場合に、partial assistant 出力を
@@ -3803,7 +2154,7 @@ class ChatViewModel(
      * 代わりに、UI / Markdown レンダラーにとって未閉鎖のままだと
      * 表示が壊れる「途中のコードフェンス」を軽く閉じるだけに留める。
      */
-    private fun closePartialAssistantContent(content: String): String =
+    internal fun closePartialAssistantContent(content: String): String =
         promptBuilding.closePartialAssistantContent(content)
 
     /**
@@ -3814,31 +2165,16 @@ class ChatViewModel(
      * なり、本文と thinking が交ざって見えるケースがある。そのため
      * 未閉じのタグを検出したら末尾に閉じタグを付ける。
      */
-    private fun closePartialThinking(thinking: String?): String? =
+    internal fun closePartialThinking(thinking: String?): String? =
         promptBuilding.closePartialThinking(thinking)
 
 
 
-    private fun withUserStopCard(toolResultsJson: String?): String {
-        val existingCards = if (!toolResultsJson.isNullOrBlank() && toolResultsJson != "[]") {
-            ToolResultCard.listFromJsonArray(toolResultsJson)
-        } else {
-            emptyList()
-        }
-        if (existingCards.any { it.toolName == "user_stop" }) {
-            return ToolResultCard.listToJsonArray(existingCards)
-        }
-
-        val stopCard = ToolResultCard(
-            toolName = "user_stop",
-            success = true,
-            payload = mapOf(
-                "message" to kotlinx.serialization.json.JsonPrimitive(appContext.getString(R.string.vm_user_stopped_generation)),
-                "icon" to kotlinx.serialization.json.JsonPrimitive("")
-            )
+    internal fun withUserStopCard(toolResultsJson: String?): String =
+        promptBuilding.withUserStopCard(
+            toolResultsJson,
+            appContext.getString(R.string.vm_user_stopped_generation)
         )
-        return ToolResultCard.listToJsonArray(existingCards + stopCard)
-    }
 
     private suspend fun reloadChatModelAfterSd(manager: ModelManager) {
         val selectedModel = getActiveSelectedModel()
@@ -4014,71 +2350,21 @@ class ChatViewModel(
      *   - 1 レスポンスで複数フォーマットのカードが同時に出ても個別に保存できる
      */
     private suspend fun invokeConvertMdToDocumentFromTool(toolCall: ToolCall): ToolExecutionResult {
-        val markdown = toolCall.arguments["markdown"]?.toString().orEmpty()
-        val formatArg = toolCall.arguments["format"]?.toString()?.trim()?.lowercase().orEmpty()
-        val fileNameArg = toolCall.arguments["fileName"]?.toString()?.trim()
-
-        if (markdown.isBlank()) {
-            return ToolExecutionResult(
-                success = false,
-                payload = mapOf("success" to false, "error" to "missing_markdown")
-            )
-        }
-
-        val format = when (formatArg) {
-            "docx", "word", "doc" -> DocumentConversionManager.TargetFormat.DOCX
-            "pdf" -> DocumentConversionManager.TargetFormat.PDF
-            "xlsx", "excel", "xls" -> DocumentConversionManager.TargetFormat.XLSX
-            else -> null
-        }
-        if (format == null) {
-            return ToolExecutionResult(
-                success = false,
-                payload = mapOf(
-                    "success" to false,
-                    "error" to "invalid_format",
-                    "message" to "format must be one of: docx, pdf, xlsx"
-                )
-            )
-        }
-
-        // カードに表示するファイル名 (拡張子付き)。未指定なら汎用名。
-        val baseName = fileNameArg?.takeIf { it.isNotBlank() } ?: "document"
-        val displayName = "$baseName.${format.extension}"
+        val (args, error) = imageToolInvoker.parseConvertMdToDocumentArgs(toolCall.arguments)
+        if (error != null) return error
+        val parsed = args ?: return ToolExecutionResult(
+            success = false,
+            payload = mapOf("success" to false, "error" to "missing_markdown")
+        )
 
         _toolCallState.value = ToolCallState.Result(
             toolName = "convert_md_to_document",
             status = "success",
-            resultMessage = appContext.getString(R.string.vm_document_prepared, displayName)
+            resultMessage = appContext.getString(R.string.vm_document_prepared, parsed.displayName)
         )
 
-        // 変換は保存時に行うため、ここでは Markdown 本文とファイル名を
-        // カード payload に積んで返すだけ。カード側 (InlineToolCallCard) が
-        // これを読んで「保存」ボタンを表示し、押下時に ChatFragment が
-        // Markdown → docx/pdf/xlsx の変換と保存を行う。
-        //
-        // コンテキスト浪費対策:
-        //   markdown 本文はモデル自身がこの直前のターンで生成したテキストそのものであり、
-        //   ツール実行結果として <tool_response> 経由でモデルに送り返すと、次ラウンド以降
-        //   毎回このプロンプトに全文が再度乗ることになる。これは意味のある新情報を運ばない
-        //   単なる自己引用の重複であり、長い文書ほどコンテキストを無駄に消費し続ける。
-        //   UI カード ("保存" ボタン付きの InlineToolCallCard) は markdown 全文を必要とする
-        //   ため payload には残すが、モデルに返す modelPayload では markdown を除いて
-        //   文字数だけを伝える (「ちゃんと受け取れた」ことをモデルが確認できれば十分)。
-        val fullPayload = buildMap {
-            put("success", true)
-            put("format", format.extension)
-            put("fileName", displayName)
-            put("markdown", markdown)
-            put("pendingConversion", true)
-        }
-        val modelPayload = buildMap {
-            put("success", true)
-            put("format", format.extension)
-            put("fileName", displayName)
-            put("markdownLength", markdown.length)
-            put("note", "Markdown was received and is queued for conversion. The full text is not echoed back to save context.")
-        }
+        // 変換は保存時。UI カード用 full payload とモデル向け (markdown 省略) は Invoker 側。
+        val (fullPayload, modelPayload) = imageToolInvoker.buildConvertMdPayloads(parsed)
         return ToolExecutionResult(
             success = true,
             payload = fullPayload,
@@ -4087,8 +2373,12 @@ class ChatViewModel(
     }
 
     private suspend fun invokeGenerateImageFromTool(toolCall: ToolCall): ToolExecutionResult {
-        val prompt = toolCall.arguments["prompt"]?.toString()?.trim().orEmpty()
-        if (prompt.isEmpty()) {
+        val parsed = imageToolInvoker.parseGenerateImageArgs(
+            toolCall.arguments,
+            defaultSteps = PreferencesHelper.getSdSteps(appContext),
+            defaultCfg = PreferencesHelper.getSdCfg(appContext)
+        )
+        if (parsed == null) {
             // UI通知：ツール実行開始
             _imageGenProgress.value = null
             viewModelScope.launch {
@@ -4102,27 +2392,15 @@ class ChatViewModel(
                 payload = mapOf("success" to false, "error" to "missing_prompt")
             )
         }
-        val neg = (
-            toolCall.arguments["negativePrompt"]
-                ?: toolCall.arguments["negative_prompt"]
-        )?.toString()?.trim().orEmpty()
-        // ツール経由でモデル名が指定された場合は、そのモデルパスを解決する
-        val requestedModelName = (
-            toolCall.arguments["model"]
-                ?: toolCall.arguments["model_name"]
-                ?: toolCall.arguments["modelName"]
-        )?.toString()?.trim()?.takeIf { it.isNotBlank() }
-        var w = (toolCall.arguments["width"] as? Number)?.toInt() ?: 256
-        var h = (toolCall.arguments["height"] as? Number)?.toInt() ?: 256
-        val allowed = listOf(256, 512, 768)
-        w = allowed.minByOrNull { kotlin.math.abs(it - w) } ?: 512
-        h = allowed.minByOrNull { kotlin.math.abs(it - h) } ?: 512
-        val steps = (toolCall.arguments["steps"] as? Number)?.toInt()?.coerceIn(1, 50) ?: PreferencesHelper.getSdSteps(appContext)
-        val cfg = (toolCall.arguments["cfg"] as? Number)?.toFloat()
-            ?: (toolCall.arguments["cfg_scale"] as? Number)?.toFloat()
-            ?: PreferencesHelper.getSdCfg(appContext)
-        val seed = (toolCall.arguments["seed"] as? Number)?.toLong() ?: -1L
-        val scheduler = SdScheduler.fromId(toolCall.arguments["scheduler"] as? String)
+        val prompt = parsed.prompt
+        val neg = parsed.negativePrompt
+        val requestedModelName = parsed.requestedModelName
+        val w = parsed.width
+        val h = parsed.height
+        val steps = parsed.steps
+        val cfg = parsed.cfg
+        val seed = parsed.seed
+        val scheduler = parsed.scheduler
 
         // ツール経由の画像生成では、実行前にユーザーへ確認ダイアログを出す。
         //   モデル・ステップ数はダイアログ上で差し替え可能で、確定した値を優先する。
@@ -4520,10 +2798,18 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun chatInferenceConfigForModel(
+    internal suspend fun chatInferenceConfigForModel(
         model: String,
         probeTemplate: Boolean = true
     ): InferenceConfig {
+        // isAlwaysOnThinkingModel → resolveChatTemplateForThinking が未キャッシュ時に
+        // GGUF ヘッダを同期読みする。呼び出し側がオーバーレイ未開始でもここで出す。
+        val engineForProbe = runCatching { toEngineModelName(model) }.getOrDefault(model)
+        if (engineForProbe.lowercase().endsWith(".gguf") || model.lowercase().contains(".gguf")) {
+            beginModelPreparationIndicator(
+                appContext.getString(R.string.model_loading_phase_template_scan)
+            )
+        }
         val base = settingsRepository.getInferenceConfigForModel(
             model,
             appContext,
@@ -4553,131 +2839,53 @@ class ChatViewModel(
         return result
     }
 
-    private fun normalizeModel(model: String): String {
-        val trimmed = model.trim()
-        val lowered = trimmed.lowercase()
-        // クラウドモデル ID (`cloud:...` / レガシー gemini_api / claude_api) はそのまま通す。
-        // 以前は else 分岐で "Gemma4-2B" に潰されてしまい、プリセットでクラウドを選んでも
-        // ローカル Gemma4-2B が動くバグの原因だった。
-        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(trimmed)) {
-            return trimmed
-        }
-        // GGUF は絶対パスが ID。表記ゆれやファイル名のみの場合でも imported から解決する。
-        val resolvedGguf = resolveGgufModelPath(trimmed)
-        if (resolvedGguf != null) return resolvedGguf
+    private fun normalizeModel(model: String): String =
+        ModelSessionCoordinator.normalizeModel(appContext, model)
 
-        val isLocalTaskPath =
-            (lowered.endsWith(".task") || lowered.endsWith(".litertlm")) &&
-                File(trimmed).isAbsolute
 
-        return when {
-            trimmed.equals("Gemma4-4B", ignoreCase = true) -> "Gemma4-4B"
-            trimmed.equals("Gemma4-2B", ignoreCase = true) -> "Gemma4-2B"
-            trimmed.equals("Gemma3n-4B", ignoreCase = true) -> "E4B"
-            trimmed.equals("Gemma3n-2B", ignoreCase = true) -> "E2B"
-            trimmed.equals("E4B", ignoreCase = true) -> "E4B"  // Gemma3n 4B (保持)
-            trimmed.equals("E2B", ignoreCase = true) -> "E2B"  // Gemma3n 2B (保持)
-            isLocalTaskPath -> trimmed
-            else -> "Gemma4-2B"  // デフォルト
-        }
-    }
+    private fun resolveGgufModelPath(model: String): String? =
+        ModelSessionCoordinator.resolveGgufModelPath(appContext, model)
 
-    /**
-     * GGUF モデル ID を実在する絶対パスに解決する。
-     * - すでに絶対パスで存在すればそれを返す
-     * - ファイル名だけ・相対・表記ゆれの場合は imported ディレクトリから同名を探す
-     * 見つからなければ null。
-     */
-    private fun resolveGgufModelPath(model: String): String? {
-        val trimmed = model.trim()
-        if (!trimmed.lowercase().endsWith(".gguf")) return null
-        val direct = File(trimmed)
-        if (direct.isAbsolute && direct.isFile && direct.canRead()) {
-            return direct.absolutePath
-        }
-        val name = direct.name
-        if (name.isBlank()) return null
-        val importedDir = File(appContext.filesDir, "models/imported")
-        val candidates = importedDir.listFiles()?.filter { file ->
-            file.isFile && file.name.equals(name, ignoreCase = true)
-        }.orEmpty()
-        return candidates.firstOrNull()?.absolutePath
-    }
 
-    private fun toEngineModelName(model: String): String {
-        val normalized = normalizeModel(model)
-        // ModelManager は `cloud:...` のフル ID を受け取り、内部でプロバイダ分岐する。
-        // ここで剥がしたり Gemma4 に置換してはいけない。
-        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(normalized)) {
-            return normalized
-        }
-        // normalizeModel が GGUF を解決済みならそのまま使う
-        if (normalized.lowercase().endsWith(".gguf") && File(normalized).isAbsolute) {
-            return normalized
-        }
-        return when {
-            normalized.equals("Gemma4-4B", ignoreCase = true) -> "gemma4-4b"
-            normalized.equals("Gemma4-2B", ignoreCase = true) -> "gemma4-2b"
-            normalized.equals("E4B", ignoreCase = true) -> "gemma-3n-4b"  // Gemma3n 4B
-            normalized.equals("E2B", ignoreCase = true) -> "gemma-3n-2b"  // Gemma3n 2B
-            (normalized.endsWith(".task") ||
-                normalized.endsWith(".litertlm")) && File(normalized).isAbsolute -> normalized
-            else -> "gemma4-2b"  // デフォルト
-        }
-    }
+    internal fun toEngineModelName(model: String): String =
+        ModelSessionCoordinator.toEngineModelName(appContext, model)
 
-    private fun isGgufEngineModel(engineModelName: String): Boolean =
+
+    internal fun isGgufEngineModel(engineModelName: String): Boolean =
         ModelSessionCoordinator.isGgufEngineModel(engineModelName)
 
-    private fun getEngineModelSizeBytes(engineModelName: String): Long? {
-        val lowerName = engineModelName.lowercase()
-        if (File(engineModelName).exists()) {
-            return File(engineModelName).length()
-        }
-        return when (lowerName) {
-            "gemma4-4b", "gemma-4-4b.litertlm" -> 4_800_000_000L
-            "gemma4-2b", "gemma-4-2b.litertlm" -> 2_400_000_000L
-            "gemma-3n-4b", "gemma-3n-4b.task" -> 4_000_000_000L
-            "gemma-3n-2b", "gemma-3n-2b.task" -> 2_000_000_000L
-            else -> null
-        }
-    }
+    private fun getEngineModelSizeBytes(engineModelName: String): Long? =
+        ModelSessionCoordinator.getEngineModelSizeBytes(engineModelName)
+
 
     /**
      * 推論結果が空のときに保存する説明文。GGUF＋メディアでは mmproj 未設定／不整合を区別する。
      */
-    private fun messageForEmptyInferencePayload(hasMediaInput: Boolean, engineModelName: String): String {
+    internal fun messageForEmptyInferencePayload(hasMediaInput: Boolean, engineModelName: String): String {
         if (!hasMediaInput || !isGgufEngineModel(engineModelName)) {
             return appContext.getString(R.string.assistant_error_generic_empty)
         }
         return appContext.getString(R.string.assistant_error_gguf_media_empty_with_mmproj)
     }
 
-    private suspend fun syncSessionTitleFromDb(sessionId: Long) {
-        val session = sessionRepository.getSessionById(sessionId) ?: return
-        _sessionTitle.value = session.name
+    internal suspend fun syncSessionTitleFromDb(sessionId: Long) {
+        val name = chatSessionCoordinator.readSessionName(sessionId) ?: return
+        _sessionTitle.value = name
     }
 
     private suspend fun maybeUpdateSessionTitleFromUserMessage(sessionId: Long, userMessage: String) {
-        if (userMessage.isBlank()) return
-        val session = sessionRepository.getSessionById(sessionId) ?: return
-        if (session.name.trim() != DEFAULT_SESSION_TITLE) return
-        val title = buildSessionTitle(userMessage, "")
-        if (title.isBlank() || title == DEFAULT_SESSION_TITLE) return
-        sessionRepository.updateSessionName(sessionId, title)
+        val title = chatSessionCoordinator.maybeUpdateTitleFromUserMessage(sessionId, userMessage)
+            ?: return
         _sessionTitle.value = title
     }
 
-    private suspend fun maybeGenerateSessionTitle(
+    internal suspend fun maybeGenerateSessionTitle(
         sessionId: Long,
         userMessage: String,
         aiResponse: String
     ) {
-        val session = sessionRepository.getSessionById(sessionId) ?: return
-        if (session.name.trim() != DEFAULT_SESSION_TITLE) return
-        val title = buildSessionTitle(userMessage, aiResponse)
-        if (title.isBlank() || title == DEFAULT_SESSION_TITLE) return
-        sessionRepository.updateSessionName(sessionId, title)
+        val title = chatSessionCoordinator.maybeGenerateTitle(sessionId, userMessage, aiResponse)
+            ?: return
         _sessionTitle.value = title
     }
 
@@ -4690,10 +2898,10 @@ class ChatViewModel(
      * </think> がまだ来ていない途中のストリームでは <think> 以降を一時的に非表示にし、
      * Thinking 本体は別 UI ブロックで表示する。
      */
-    private fun stripThinkSectionsForDisplay(raw: String): String =
+    internal fun stripThinkSectionsForDisplay(raw: String): String =
         promptBuilding.stripThinkSectionsForDisplay(raw)
 
-    private fun sanitizeAssistantOutputForModel(engineModelName: String, text: String): String =
+    internal fun sanitizeAssistantOutputForModel(engineModelName: String, text: String): String =
         promptBuilding.sanitizeAssistantOutputForModel(engineModelName, text)
 
     /**
@@ -4701,36 +2909,13 @@ class ChatViewModel(
      * インラインツールカード用の本文を復元する。思考ブロックは除き、未完の
      * `<tool_call>` は残す。
      */
-    private fun restoreStreamingContentForToolCards(
+    internal fun restoreStreamingContentForToolCards(
         engineModelName: String,
         rawAnswer: String
-    ): String {
-        val rawAccumulated = Gemma4ThinkingParser.sanitizeVisibleText(
-            stripThinkSectionsForDisplay(rawAnswer),
-            preserveToolCallTags = true
-        )
-        if (rawAccumulated.isBlank()) return ""
-        if (hasStreamingToolCallMarkup(rawAccumulated)) {
-            return sanitizeAssistantOutputForModel(engineModelName, rawAccumulated)
-        }
-        val visibleOutsideToolBlocks = rawAccumulated
-            .replace(Regex("(?s)<tool_call>.*?</tool_call>"), "")
-            .replace(Regex("(?s)<tool_response>.*?</tool_response>"), "")
-            .substringBefore("<tool_call>")
-            .trim()
-        return if (visibleOutsideToolBlocks.isNotEmpty()) {
-            sanitizeAssistantOutputForModel(engineModelName, rawAccumulated)
-        } else {
-            ""
-        }
-    }
+    ): String = promptBuilding.restoreStreamingContentForToolCards(engineModelName, rawAnswer)
 
-    private fun hasStreamingToolCallMarkup(text: String): Boolean {
-        val n = ToolCallTags.normalizeFullwidthToolTagDelimiters(text)
-        return ToolCallTags.TOOL_CALL_OPEN in n ||
-            ToolCallTags.GEMMA4_TOOL_CALL_OPEN in n ||
-            n.contains("<function", ignoreCase = true)
-    }
+    internal fun hasStreamingToolCallMarkup(text: String): Boolean =
+        promptBuilding.hasStreamingToolCallMarkup(text)
 
     /**
      * @param isCurrentTurn when true (= current-turn user message), GGUF embeds <image> token in prompt.
@@ -4755,13 +2940,13 @@ class ChatViewModel(
         )
     }
 
-    private fun mergeStreamingChunk(current: String, chunk: String): String =
+    internal fun mergeStreamingChunk(current: String, chunk: String): String =
         promptBuilding.mergeStreamingChunk(current, chunk)
 
-    private fun isLikelyMarkdownTable(content: String): Boolean =
+    internal fun isLikelyMarkdownTable(content: String): Boolean =
         promptBuilding.isLikelyMarkdownTable(content)
 
-    private suspend fun buildPromptWithSessionContext(
+    internal suspend fun buildPromptWithSessionContext(
         sessionId: Long,
         config: InferenceConfig,
         manager: ModelManager,
@@ -4845,7 +3030,7 @@ class ChatViewModel(
      * なおこのペイロードは trimPromptToWindow では切り詰めない (JSON 構造を壊すため)。
      * 履歴側で予め文字数予算を管理する。
      */
-    private suspend fun buildLiteRtStructuredPayload(
+    internal suspend fun buildLiteRtStructuredPayload(
         sessionId: Long,
         config: InferenceConfig,
         currentTurnMessageId: Long?
@@ -4929,7 +3114,7 @@ class ChatViewModel(
      * system にはユーザー名 / メモリブロック / ツール定義を注入した最終文字列を乗せる
      * (buildPromptFromMessages の system 組み立てと同一の手順)。
      */
-    private suspend fun buildCloudChatMessages(
+    internal suspend fun buildCloudChatMessages(
         sessionId: Long,
         config: InferenceConfig,
         engineModelName: String,
@@ -5025,66 +3210,34 @@ class ChatViewModel(
             return null
         }
 
-        // ③ トークン予算管理：メモリに使えるのはコンテキスト全体の最大15%
-        // 優先度: システムプロンプト(削らない) > 関連メモリ(スコア低い順に削る) > 会話履歴
+        // ③ トークン予算管理 + ブロック整形は MemoryInjectionCoordinator に委譲
         val systemPromptChars = getActiveSystemPrompt().length
-        val totalBudgetChars = contextWindowTokens * TOKEN_TO_CHAR_RATIO
-
-        // メモリの最小予算を保証（500 chars ≈ 125 tokens）
-        val MIN_MEMORY_BUDGET_CHARS = 500
-
-        // 予算計算：全体の15% vs 残り領域
-        // システムプロンプトと会話履歴のために領域を予約
-        val memoryBudgetCharsBeforeCoerce = (totalBudgetChars * MEMORY_BUDGET_RATIO).toInt()
-        val availableCharsAfterReserves = totalBudgetChars - systemPromptChars - HISTORY_RESERVE_CHARS
-
-        val memoryBudgetChars = if (availableCharsAfterReserves >= MIN_MEMORY_BUDGET_CHARS) {
-            // 十分な予算がある場合は、15% と残り領域の小さい方
-            minOf(memoryBudgetCharsBeforeCoerce, availableCharsAfterReserves)
-        } else if (availableCharsAfterReserves > 0) {
-            // わずかな予算しかない場合でも、最小限のメモリ領域を確保
-            minOf(MIN_MEMORY_BUDGET_CHARS, availableCharsAfterReserves).coerceAtLeast(100)
-        } else {
-            // 予備領域を調整してメモリ予算を確保
-            val adjustedReserve = HISTORY_RESERVE_CHARS / 2  // 会話履歴予約を半減
-            val remainingBudget = totalBudgetChars - systemPromptChars - adjustedReserve
-            minOf(MIN_MEMORY_BUDGET_CHARS, remainingBudget).coerceAtLeast(0)
-        }
-
-        Log.d(TAG, "MEMORY_INJECT: contextWindow=$contextWindowTokens tokens -> totalBudget=${totalBudgetChars}chars")
-        Log.d(TAG, "MEMORY_INJECT: systemPrompt=$systemPromptChars chars, historyReserve=$HISTORY_RESERVE_CHARS chars")
-        Log.d(TAG, "MEMORY_INJECT: budget calculation: 15%=$memoryBudgetCharsBeforeCoerce vs available=$availableCharsAfterReserves -> final=$memoryBudgetChars chars")
-
-        if (memoryBudgetChars == 0) {
+        val breakdown = MemoryInjectionCoordinator.computeBudgetBreakdown(
+            contextWindowTokens,
+            systemPromptChars
+        )
+        Log.d(TAG, "MEMORY_INJECT: contextWindow=$contextWindowTokens tokens -> totalBudget=${breakdown.totalBudgetChars}chars")
+        Log.d(TAG, "MEMORY_INJECT: systemPrompt=$systemPromptChars chars, historyReserve=${MemoryInjectionCoordinator.HISTORY_RESERVE_CHARS} chars")
+        Log.d(
+            TAG,
+            "MEMORY_INJECT: budget calculation: 15%=${breakdown.fifteenPercentChars} vs available=${breakdown.availableAfterReserves} -> final=${breakdown.finalBudgetChars} chars"
+        )
+        if (breakdown.finalBudgetChars == 0) {
             Log.d(TAG, "MEMORY_INJECT: budget=0 (systemPrompt=$systemPromptChars > available space), skipping injection")
             return null
         }
 
-        // スコア高い順に予算内に収まるだけ詰める
-        val trimmedResults = mutableListOf<MemoryRepository.ScoredMemory>()
-        var usedChars = MEMORY_HEADER_CHARS  // "関連メモリ:\n" のオーバーヘッド
-        for (result in results) {
-            val entryChars = result.memory.content.length + 5  // "N. \n" のオーバーヘッド
-            if (usedChars + entryChars > memoryBudgetChars) break
-            trimmedResults.add(result)
-            usedChars += entryChars
-        }
-
-        if (trimmedResults.isEmpty()) {
+        val contents = results.map { it.memory.content }
+        val block = MemoryInjectionCoordinator.formatMemoryBlock(contents, breakdown.finalBudgetChars)
+        if (block == null) {
             Log.d(TAG, "MEMORY_INJECT: all results filtered out by budget constraints")
             return null
         }
-
-        Log.d(TAG, "MEMORY_INJECT: session=$sessionId query='$query' count=${trimmedResults.size}/${results.size} budgetChars=$memoryBudgetChars usedChars=$usedChars")
-        return buildString {
-            append("関連メモリ:\n")
-            trimmedResults.forEachIndexed { index, scored ->
-                append(index + 1)
-                append(". ")
-                append(scored.memory.content.trim())
-                append('\n')
-            }
-        }.trim()
+        Log.d(
+            TAG,
+            "MEMORY_INJECT: session=$sessionId query='$query' count=${block.lines().count { it.isNotBlank() && it.first().isDigit() }}/${results.size} budgetChars=${breakdown.finalBudgetChars}"
+        )
+        return block
     }
 
     /**
@@ -5092,7 +3245,7 @@ class ChatViewModel(
      * - MemoryExtractionWorker の直列キュー（limitedParallelism(1)）に委譲
      * - 抽出完了後に _isExtracting が false に戻る
      */
-    private fun enqueueMemoryExtraction(sessionId: Long) {
+    internal fun enqueueMemoryExtraction(sessionId: Long) {
         val worker = memoryExtractionWorker ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val messages = messageRepository.getMessagesForSessionOnce(sessionId)
@@ -5188,7 +3341,7 @@ class ChatViewModel(
         _currentSessionId.value == sessionId
 
     /** True only while [sessionId] is shown and owns the active message collection. */
-    private fun isCurrentContextSession(sessionId: Long): Boolean =
+    internal fun isCurrentContextSession(sessionId: Long): Boolean =
         isDisplayedSession(sessionId) && activeCollectionSessionId == sessionId
 
     private suspend fun estimateContextUsageChars(
@@ -5319,78 +3472,34 @@ class ChatViewModel(
     }
 
     /** プロンプト構築と同じく、選択中の再生成 1 件以外はメーターに入れない。 */
-    private fun messagesIncludedInModelContext(messages: List<MessageEntity>): List<MessageEntity> {
-        val selected = applyVariantSelection(messages, _selectedVariantByParent.value)
-        val regeneratingParentId = _pendingAssistantVariantSpec?.parentUserMessageId
-        return if (regeneratingParentId != null) {
-            selected.filterNot { msg ->
-                msg.role != "user" && msg.parentUserMessageId == regeneratingParentId
-            }
-        } else {
-            selected
-        }
-    }
+    private fun messagesIncludedInModelContext(messages: List<MessageEntity>): List<MessageEntity> =
+        contextMeter.messagesIncludedInModelContext(
+            messages = messages,
+            selectedVariantByParent = _selectedVariantByParent.value,
+            regeneratingParentUserMessageId = _pendingAssistantVariantSpec?.parentUserMessageId
+        )
 
-    private fun recountGgufMediaTokens(messages: List<MessageEntity>): Int {
-        var images = 0
-        var audio = 0
-        for (message in messages) {
-            if (shouldExcludeFromModelContext(message)) continue
-            message.imageUri?.split(',')?.forEach { raw ->
-                val uri = raw.trim()
-                if (uri.isEmpty()) return@forEach
-                if (com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(uri) ||
-                    com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(uri)
-                ) {
-                    return@forEach
-                }
-                images++
-            }
-            if (!message.audioUri.isNullOrBlank()) audio++
-        }
-        if (images == 0 && audio == 0) return 0
-        val perImage = ggufTokensPerImage.takeIf { it > 0 } ?: return 0
-        val perAudio = ggufTokensPerAudio.takeIf { it > 0 } ?: perImage
-        return images * perImage + audio * perAudio
-    }
+    private fun recountGgufMediaTokens(messages: List<MessageEntity>): Int =
+        contextMeter.recountGgufMediaTokens(
+            messages = messages,
+            tokensPerImage = ggufTokensPerImage,
+            tokensPerAudio = ggufTokensPerAudio
+        )
 
     private fun updateGgufMediaUnits(requestMedia: Int, messages: List<MessageEntity>) {
-        if (requestMedia <= 0) return
-        val latest = messages.lastOrNull { message ->
-            message.role.equals("user", ignoreCase = true) &&
-                (!message.imageUri.isNullOrBlank() || !message.audioUri.isNullOrBlank())
-        } ?: return
-        val items = recountAttachmentCount(listOf(latest))
-        if (items <= 0) return
-        val each = requestMedia / items
-        if (each <= 0) return
-        if (!latest.imageUri.isNullOrBlank()) ggufTokensPerImage = each
-        if (!latest.audioUri.isNullOrBlank()) ggufTokensPerAudio = each
+        val (imageUnit, audioUnit) = contextMeter.learnGgufMediaUnitTokens(requestMedia, messages)
+        if (imageUnit != null) ggufTokensPerImage = imageUnit
+        if (audioUnit != null) ggufTokensPerAudio = audioUnit
     }
 
-    private fun recountAttachmentCount(messages: List<MessageEntity>): Int {
-        var count = 0
-        for (message in messages) {
-            message.imageUri?.split(',')?.forEach { raw ->
-                val uri = raw.trim()
-                if (uri.isEmpty()) return@forEach
-                if (com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(uri) ||
-                    com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(uri)
-                ) {
-                    return@forEach
-                }
-                count++
-            }
-            if (!message.audioUri.isNullOrBlank()) count++
-        }
-        return count
-    }
+    private fun recountAttachmentCount(messages: List<MessageEntity>): Int =
+        contextMeter.recountAttachmentCount(messages)
 
     /**
      * 推論開始前に、今の履歴（送信済みユーザー分を含む）でメーターを確定する。
      * 生成中はこの値を保持し、完了後にモデル生成分を足す。
      */
-    private suspend fun publishContextMeterBeforeGeneration(sessionId: Long) {
+    internal suspend fun publishContextMeterBeforeGeneration(sessionId: Long) {
         if (!isCurrentContextSession(sessionId)) return
         if (meterLoadedModelName.isNullOrBlank()) return
         val messages = runCatching { messageRepository.getMessagesForSessionOnce(sessionId) }
@@ -5407,7 +3516,7 @@ class ChatViewModel(
         )
     }
 
-    private fun applyMeterAfterSend(
+    internal fun applyMeterAfterSend(
         manager: ModelManager,
         engineModelName: String,
         fallbackTotal: Int,
@@ -5421,13 +3530,12 @@ class ChatViewModel(
         val promptTokens = promptInfo?.first?.takeIf { it > 0 }
         val contextTotal = fallbackTotal.takeIf { it > 0 }
         val generated = generatedTokens.coerceAtLeast(0)
-        val total = when {
-            contextTotal != null && promptTokens != null && contextTotal > promptTokens -> contextTotal
-            contextTotal != null && promptTokens == null -> contextTotal
-            promptTokens != null -> promptTokens + generated
-            contextTotal != null -> contextTotal
-            else -> (_contextUsageTokens.value + generated).coerceAtLeast(0)
-        }
+        val total = contextMeter.resolveTotalTokensAfterSend(
+            contextTotal = contextTotal,
+            promptTokens = promptTokens,
+            generated = generated,
+            previousUsageTokens = _contextUsageTokens.value
+        )
         if (!gguf) {
             // LiteRT-LM は合計だけ。llama.cpp の内訳バーは出さない。
             _contextMeterSegments.value = ContextMeterSegments()
@@ -5443,24 +3551,21 @@ class ChatViewModel(
         updateGgufMediaUnits(requestMedia, _messages.value)
         val media = recountGgufMediaTokens(_messages.value)
         val current = _contextMeterSegments.value
-        val textTotal = (total - media).coerceAtLeast(0)
-        val fixed = (current.systemTokens + current.toolTokens).coerceAtLeast(0)
-        val chatFromTotal = (textTotal - fixed).coerceAtLeast(0)
-        // n_past / getTokenCount が生成分を含んでいれば内訳をそちらに合わせる。
-        // 含んでいなければ、送信前のチャット分に生成トークンを足す。
-        val chatTokens = if (chatFromTotal > current.chatTokens) {
-            chatFromTotal
-        } else {
-            current.chatTokens + generated
-        }
-        val scaled = ContextMeterSegments(
-            systemTokens = current.systemTokens.coerceAtLeast(0),
-            toolTokens = current.toolTokens.coerceAtLeast(0),
-            chatTokens = chatTokens.coerceAtLeast(0),
-            mediaTokens = media
+        val scaledCounts = contextMeter.scaleSegmentsAfterSend(
+            total = total,
+            media = media,
+            currentSystemTokens = current.systemTokens,
+            currentToolTokens = current.toolTokens,
+            currentChatTokens = current.chatTokens,
+            generated = generated
         )
-        val published = (scaled.systemTokens + scaled.toolTokens + scaled.chatTokens + scaled.mediaTokens)
-            .coerceAtLeast(0)
+        val scaled = ContextMeterSegments(
+            systemTokens = scaledCounts.systemTokens,
+            toolTokens = scaledCounts.toolTokens,
+            chatTokens = scaledCounts.chatTokens,
+            mediaTokens = scaledCounts.mediaTokens
+        )
+        val published = scaledCounts.publishedTotal
         _contextMeterSegments.value = scaled
         _contextMediaTokens.value = media
         _contextUsageTokens.value = published
@@ -5613,7 +3718,7 @@ class ChatViewModel(
     }
 
     private fun countMediaMarkers(text: String): Int =
-        Regex("<__media__>").findAll(text).count()
+        contextMeter.countMediaMarkers(text)
 
     /** テンプレート適用後に `<__media__>` が残っているかを確認する診断ログ。 */
     private fun logRenderedMediaPrompt(source: String, payloadMarkerCount: Int, rendered: String) {
@@ -5795,22 +3900,22 @@ class ChatViewModel(
     /**
      * Bitmapを1024x1024以下にダウンスケール
      */
-    private fun scaleBitmapTo1024(bitmap: Bitmap): Bitmap =
+    internal fun scaleBitmapTo1024(bitmap: Bitmap): Bitmap =
         platformMediaLoader.scaleBitmapTo1024(bitmap)
 
     /**
      * URIからBitmapをロード
      */
-    private suspend fun loadBitmapFromUri(uri: Uri): Bitmap? =
+    internal suspend fun loadBitmapFromUri(uri: Uri): Bitmap? =
         platformMediaLoader.loadBitmapFromUri(uri)
 
     /**
      * URIから音声ByteArrayをロード
      */
-    private suspend fun loadAudioBytesFromUri(uri: Uri): ByteArray? =
+    internal suspend fun loadAudioBytesFromUri(uri: Uri): ByteArray? =
         platformMediaLoader.loadAudioBytesFromUri(uri)
 
-    private suspend fun requireModelManager(): ModelManager {
+    internal suspend fun requireModelManager(): ModelManager {
         val current = modelManager
         if (current != null) return current
         return ModelManager.getInstance(appContext).also { manager ->
@@ -5826,7 +3931,7 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun loadModelWithOverlay(
+    internal suspend fun loadModelWithOverlay(
         model: String,
         config: InferenceConfig,
         onlyIfAvailable: Boolean,
@@ -5849,6 +3954,11 @@ class ChatViewModel(
         //   ここで先手を打ってリターンすれば、呼び元は瞬時に推論以降のフェーズに進める。
         if (isModelAlreadyLoaded && modelLoadingOverlayDepth == 0) {
             setMeterLoadedModel(engineModelName)
+            // beginModelPreparationIndicator だけが立っている場合 (depth=0) はここで消す。
+            // 残すと「既ロードなのに準備中のまま」になる。
+            if (_isModelLoading.value) {
+                clearModelLoadingIndicator()
+            }
             Log.d(TAG, "loadModelWithOverlay: SHORT_CIRCUIT model=$model already loaded, skip overlay entirely")
             return Result.success(Unit)
         }
@@ -5892,13 +4002,19 @@ class ChatViewModel(
                         )
                     }
                     // 既に警告表示中でも、続行前にロードを始めない
+                    // テンプレート確認用の準備中表示だけ立っている場合は落とす
+                    if (modelLoadingOverlayDepth == 0 && _isModelLoading.value) {
+                        clearModelLoadingIndicator()
+                    }
                     return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
                 }
             }
         }
 
         acquireModelLoadingOverlay()
-        setMeterLoadedModel(null)
+        // 注意: setMeterLoadedModel(null) を mutex 外で呼ぶと、並行する別ロードが
+        // 成功した直後の meter 状態を潰し「エンジンは載っているが未ロード扱い」になる。
+        // メーターのクリアは「これから本当にロードする」と決まった mutex 内だけで行う。
  // モデル名やフェーズごとのラベルは以前「[Gemma4-2B] エンジンを初期化中...」などバラバラだったのを
         //   全て「モデル準備中 · <フェーズ> (n秒)」に統一する。タイマーを 1秒毎に回して
         //   進捗ラベルを自動更新。
@@ -5913,6 +4029,8 @@ class ChatViewModel(
                 Log.d(TAG, "loadModelWithOverlay: SHORT_CIRCUIT after wait model=$model already loaded")
                 return@withLock Result.success(Unit)
             }
+            // 実ロード開始直前にだけメーターを落とす (並行成功分を潰さない)
+            setMeterLoadedModel(null)
             val displayModel = when (model.uppercase()) {
                 "GEMMA4-2B" -> "Gemma4-2B"
                 "GEMMA4-4B" -> "Gemma4-4B"
@@ -6432,12 +4550,12 @@ class ChatViewModel(
     /**
      * Acquire WakeLock to prevent screen sleep during generation
      */
-    private fun acquireScreenWakeLock() = platformWakeLock.acquire()
+    internal fun acquireScreenWakeLock() = platformWakeLock.acquire()
 
     /**
      * Release WakeLock when generation completes
      */
-    private fun releaseScreenWakeLock() = platformWakeLock.release()
+    internal fun releaseScreenWakeLock() = platformWakeLock.release()
 
     fun synthesizeText(messageId: Long, text: String) {
         if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
