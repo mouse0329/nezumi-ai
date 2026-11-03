@@ -1849,4 +1849,8 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
 
     <string name="settings_search_hint">設定項目を検索</string>
     <string name="settings_search_no_results">一致する設定項目がありません</string>
+    <string name="external_link_title">外部リンクを開きます</string>
+    <string name="external_link_message">以下のURLを外部アプリで開きます。Nezumi AIアプリを離れます。\n\n%1$s</string>
+    <string name="external_link_open">開く</string>
+    <string name="cancel">キャンセル</string>
 </resources>

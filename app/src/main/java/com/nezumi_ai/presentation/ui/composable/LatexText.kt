@@ -24,15 +24,22 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -55,6 +62,7 @@ import com.halilibo.richtext.ui.RichTextStyle
 import com.halilibo.richtext.ui.material3.RichText
 import com.halilibo.richtext.ui.string.RichTextStringStyle
 import com.nezumi_ai.R
+import com.nezumi_ai.utils.ExternalLinkOpener
 import dev.hossain.highlight.ui.HighlightThemeProvider
 import dev.hossain.highlight.ui.SyntaxHighlightedCode
 import ru.noties.jlatexmath.JLatexMathDrawable
@@ -169,6 +177,15 @@ fun MarkdownLatexText(
     val density = LocalDensity.current
     val contentColor = LocalContentColor.current
     val isDark = isSystemInDarkTheme()
+    val context = LocalContext.current
+    var pendingUrl by remember { mutableStateOf<String?>(null) }
+    val uriHandler = remember(context) {
+        object : UriHandler {
+            override fun openUri(uri: String) {
+                pendingUrl = uri
+            }
+        }
+    }
     
     // ダークモード時は白文字、ライトモード時は自動（contentColor）
     val textColorInt = if (isDark) {
@@ -194,13 +211,17 @@ fun MarkdownLatexText(
                 is MixedPart.MarkdownPart -> {
                     // Markdownコンテンツが空でないか確認
                     if (part.content.isNotBlank()) {
-                        RichText(
-                            modifier = Modifier.widthIn(max = maxW),
-                            style = if (linkStyle != null) {
-                                RichTextStyle(stringStyle = RichTextStringStyle(linkStyle = linkStyle))
-                            } else null
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            LocalUriHandler provides uriHandler
                         ) {
-                            Markdown(content = part.content)
+                            RichText(
+                                modifier = Modifier.widthIn(max = maxW),
+                                style = if (linkStyle != null) {
+                                    RichTextStyle(stringStyle = RichTextStringStyle(linkStyle = linkStyle))
+                                } else null
+                            ) {
+                                Markdown(content = part.content)
+                            }
                         }
                     }
                 }
@@ -238,6 +259,33 @@ fun MarkdownLatexText(
                 }
             }
         }
+        }
+
+        pendingUrl?.let { url ->
+            AlertDialog(
+                onDismissRequest = { pendingUrl = null },
+                title = { Text(stringResource(R.string.external_link_title)) },
+                text = {
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(stringResource(R.string.external_link_message, url))
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingUrl = null
+                            ExternalLinkOpener.openUrl(context, url)
+                        }
+                    ) {
+                        Text(stringResource(R.string.external_link_open))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingUrl = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
         }
     }
 }

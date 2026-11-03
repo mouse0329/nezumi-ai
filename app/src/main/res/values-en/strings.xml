@@ -1775,4 +1775,8 @@ When you attach and send it, the contents are automatically converted to Markdow
 
     <string name="settings_search_hint">Search settings</string>
     <string name="settings_search_no_results">No matching settings</string>
+    <string name="external_link_title">Open external link</string>
+    <string name="external_link_message">The following URL will be opened in an external app. You will leave Nezumi AI.\n\n%1$s</string>
+    <string name="external_link_open">Open</string>
+    <string name="cancel">Cancel</string>
 </resources>
