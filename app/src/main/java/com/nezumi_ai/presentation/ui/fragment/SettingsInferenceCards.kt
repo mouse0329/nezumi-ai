@@ -106,6 +106,21 @@ internal fun SettingsComposeFragment.InferenceParamsCard(settingsSearchJumpState
                 )
             }
 
+            OutlinedTextField(
+                value = cloudMaxTokensInput,
+                onValueChange = { cloudMaxTokensInput = it },
+                label = { Text(stringResource(id = R.string.settings_inference_cloud_max_tokens)) },
+                supportingText = { Text(stringResource(id = R.string.settings_inference_cloud_max_tokens_desc)) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .settingsSearchAnchor(
+                        R.string.settings_inference_cloud_max_tokens,
+                        settingsSearchJumpState
+                    ),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+
             // Temperature Slider
             Column(
                 verticalArrangement = Arrangement.spacedBy(6.dp),

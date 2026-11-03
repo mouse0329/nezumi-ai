@@ -35,7 +35,7 @@ import com.nezumi_ai.data.database.entity.ToolCallHistoryEntity
         MemorySessionEntity::class,
         ToolCallHistoryEntity::class
     ],
-    version = 36,
+    version = 37,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -61,7 +61,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -377,6 +377,13 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                 database.execSQL(
                     "UPDATE settings SET llamaCppRopeFreqBase = 0 WHERE ABS(llamaCppRopeFreqBase - 500000.0) < 1.0"
                 )
+            }
+
+        }
+
+        private val MIGRATION_36_37 = object : androidx.room.migration.Migration(36, 37) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE settings ADD COLUMN cloudMaxTokens INTEGER NOT NULL DEFAULT 8192")
             }
         }
 

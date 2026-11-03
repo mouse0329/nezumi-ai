@@ -730,6 +730,9 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <!-- Inference inputs -->
     <string name="settings_inference_context_size">Context size</string>
     <string name="settings_inference_max_tokens">Max tokens</string>
+    <string name="settings_inference_cloud_max_tokens">Cloud max output tokens</string>
+    <string name="settings_inference_cloud_max_tokens_desc">For cloud models only. Set a value from 64 to 131072.</string>
+    <string name="settings_inference_cloud_max_tokens_range">Cloud max output tokens must be between %1$s and %2$s.</string>
     <string name="settings_inference_check_engine_version">Check llama.cpp / LiteRT-LM version</string>
     <string name="settings_inference_engine_version_title">Inference engine versions</string>
     <string name="settings_inference_temperature_label">Temperature</string>
@@ -1241,7 +1244,10 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="cloud_models_hide_button">Hide</string>
     <string name="cloud_models_unhide_button">Show</string>
     <string name="cloud_models_hidden_tag">Hidden</string>
+    <string name="cloud_models_hidden_section">Hidden models (%1$d)</string>
     <string name="cloud_models_empty">No cloud models have been added yet.</string>
+    <string name="cloud_model_offline">Cannot use cloud model while offline (%1$s)</string>
+    <string name="cloud_model_error">Error occurred with cloud model (%1$s)</string>
     <!-- Default preset model-missing modal -->
     <string name="default_model_missing_title">No model selected</string>
     <string name="default_model_missing_message">The model used by the default preset (Gemma4-2B) is not downloaded. Pick an available model, or open the model management screen to download a model or add a cloud model.</string>

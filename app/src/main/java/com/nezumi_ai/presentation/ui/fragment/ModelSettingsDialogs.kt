@@ -1,6 +1,9 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.nezumi_ai.presentation.ui.fragment
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 
 // ModelSettingsFragment から切り出したモデル設定ダイアログ。状態は Fragment の internal プロパティを読む。
 
@@ -33,6 +36,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -44,6 +50,9 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -894,16 +903,37 @@ internal fun ModelSettingsFragment.CloudEndpointGroupItem(group: CloudEndpointGr
                             modifier = Modifier.padding(top = 2.dp)
                         )
                     }
-                    Text(
-                        text = stringResource(id = R.string.cloud_models_endpoint_models, group.modelIds.size) +
-                            " · " + stringResource(
-                                id = if (configured) R.string.cloud_models_status_configured
-                                else R.string.cloud_models_status_missing
-                            ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorResource(id = if (configured) R.color.primary else R.color.text_secondary),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(top = 2.dp)
-                    )
+                    ) {
+                        val isOffline = remember(group.endpoint) {
+                            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                            val net = cm?.activeNetwork
+                            val caps = net?.let { cm.getNetworkCapabilities(it) }
+                            caps == null || !(caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+                        }
+                        if (isOffline) {
+                            Icon(
+                                imageVector = Icons.Filled.CloudOff,
+                                contentDescription = null,
+                                tint = colorResource(id = R.color.text_secondary),
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .padding(end = 4.dp)
+                            )
+                        }
+                        Text(
+                            text = stringResource(id = R.string.cloud_models_endpoint_models, group.modelIds.size) +
+                                " · " + stringResource(
+                                    id = if (configured) R.string.cloud_models_status_configured
+                                    else R.string.cloud_models_status_missing
+                                ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = if (configured) R.color.primary else R.color.text_secondary)
+                        )
+                    }
                 }
                 TextButton(
                     onClick = {
@@ -914,14 +944,19 @@ internal fun ModelSettingsFragment.CloudEndpointGroupItem(group: CloudEndpointGr
                     Text(stringResource(id = R.string.cloud_models_disconnect_button), fontSize = 12.sp)
                 }
             }
-            group.modelIds.forEach { modelId ->
+            // Visible models always shown; hidden ones are collapsible
+            val visibleIds = group.modelIds.filter { !CloudModelVisibility.isHidden(context, it) }
+            val hiddenIds = group.modelIds.filter { CloudModelVisibility.isHidden(context, it) }
+            var hiddenExpanded by remember(group.endpoint) { mutableStateOf(false) }
+
+            @Composable
+            fun ModelRow(modelId: String, isHidden: Boolean) {
                 val media = CloudMediaCapability.forModel(modelId)
-                val hidden = CloudModelVisibility.isHidden(context, modelId)
                 val tags = buildList {
                     add(stringResource(id = R.string.model_tag_cloud))
                     if (media.image) add(stringResource(id = R.string.cloud_models_tag_image))
                     if (media.audio) add(stringResource(id = R.string.cloud_models_tag_audio))
-                    if (hidden) add(stringResource(id = R.string.cloud_models_hidden_tag))
+                    if (isHidden) add(stringResource(id = R.string.cloud_models_hidden_tag))
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
@@ -931,25 +966,54 @@ internal fun ModelSettingsFragment.CloudEndpointGroupItem(group: CloudEndpointGr
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = CloudModelId.bareModelName(CloudModelId.parse(modelId)?.modelName.orEmpty()),
-                            color = colorResource(id = if (hidden) R.color.text_secondary else R.color.text_primary),
+                            color = colorResource(id = if (isHidden) R.color.text_secondary else R.color.text_primary),
                             fontSize = 14.sp
                         )
                         ModelQuantTags(nameSource = CloudModelId.parse(modelId)?.modelName ?: modelId, extraTags = tags)
                     }
                     TextButton(
                         onClick = {
-                            CloudModelVisibility.setHidden(context, modelId, !hidden)
+                            CloudModelVisibility.setHidden(context, modelId, !isHidden)
                             cloudModelsRevision++
                         }
                     ) {
                         Text(
                             stringResource(
-                                id = if (hidden) R.string.cloud_models_unhide_button
+                                id = if (isHidden) R.string.cloud_models_unhide_button
                                 else R.string.cloud_models_hide_button
                             ),
                             fontSize = 12.sp
                         )
                     }
+                }
+            }
+
+            visibleIds.forEach { ModelRow(it, isHidden = false) }
+
+            if (hiddenIds.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .clickable { hiddenExpanded = !hiddenExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.cloud_models_hidden_section, hiddenIds.size),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colorResource(id = R.color.text_secondary),
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        imageVector = if (hiddenExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = colorResource(id = R.color.text_secondary),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                if (hiddenExpanded) {
+                    hiddenIds.forEach { ModelRow(it, isHidden = true) }
                 }
             }
         }
@@ -1174,22 +1238,29 @@ internal fun ModelSettingsFragment.CloudModelDialog(
                     }
                     cloudDialogState = state.copy(fetchingModels = true, errorMessage = null, baseUrl = resolvedUrl)
                     viewLifecycleOwner.lifecycleScope.launch {
-                        val count = withContext(Dispatchers.IO) {
-                            CloudModelSync.connectForContext(
-                                requireContext(),
-                                state.provider,
-                                resolvedUrl,
-                                state.apiKey
-                            )
-                        }
-                        if (count < 0) {
+                        try {
+                            val count = withContext(Dispatchers.IO) {
+                                CloudModelSync.connectForContext(
+                                    requireContext(),
+                                    state.provider,
+                                    resolvedUrl,
+                                    state.apiKey
+                                )
+                            }
+                            if (count < 0) {
+                                cloudDialogState = cloudDialogState?.copy(
+                                    fetchingModels = false,
+                                    errorMessage = getString(R.string.cloud_models_fetch_models_empty)
+                                )
+                            } else {
+                                toast(getString(R.string.cloud_models_synced, count))
+                                onConnected()
+                            }
+                        } catch (t: Throwable) {
                             cloudDialogState = cloudDialogState?.copy(
                                 fetchingModels = false,
                                 errorMessage = getString(R.string.cloud_models_fetch_models_empty)
                             )
-                        } else {
-                            toast(getString(R.string.cloud_models_synced, count))
-                            onConnected()
                         }
                     }
                 }

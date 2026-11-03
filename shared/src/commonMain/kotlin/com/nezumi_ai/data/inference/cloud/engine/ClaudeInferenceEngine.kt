@@ -51,9 +51,10 @@ class ClaudeInferenceEngine(
             .filter { it.role == CloudChatMessage.Role.SYSTEM }
             .joinToString("\n") { it.text }
             .trim()
+        val maxTokens = config.maxTokens ?: CloudInferenceParams.DEFAULT_CLAUDE_MAX_TOKENS
 
         val bodyJson = buildJsonObject {
-            put("model", model); put("max_tokens", config.maxTokens); put("stream", true)
+            put("model", model); put("max_tokens", maxTokens); put("stream", true)
             // extended thinking は temperature != 1 / top_p 指定で 400 になる。
             if (!config.enableThinking) {
                 put("temperature", config.temperature.toDouble())
@@ -84,7 +85,7 @@ class ClaudeInferenceEngine(
                         }
                         putJsonObject("thinking") {
                             put("type", "enabled")
-                            put("budget_tokens", CloudThinkingEffort.claudeBudgetTokens(effort, config.maxTokens))
+                            put("budget_tokens", CloudThinkingEffort.claudeBudgetTokens(effort, maxTokens))
                         }
                     }
                 }

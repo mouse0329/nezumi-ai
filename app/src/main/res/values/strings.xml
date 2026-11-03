@@ -605,6 +605,9 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <!-- 推論入力 -->
     <string name="settings_inference_context_size">コンテキストサイズ</string>
     <string name="settings_inference_max_tokens">最大トークン数</string>
+    <string name="settings_inference_cloud_max_tokens">クラウド最大出力トークン数</string>
+    <string name="settings_inference_cloud_max_tokens_desc">クラウドモデル専用。64 - 131072 の範囲で設定できます。</string>
+    <string name="settings_inference_cloud_max_tokens_range">クラウド最大出力トークン数は %1$s - %2$s の範囲で入力してください</string>
     <string name="settings_inference_check_engine_version">llama.cpp / LiteRT-LM バージョンを確認</string>
     <string name="settings_inference_engine_version_title">推論エンジンのバージョン</string>
     <string name="settings_inference_temperature_label">温度 (Temperature)</string>
@@ -1101,6 +1104,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="cloud_models_hide_button">非表示</string>
     <string name="cloud_models_unhide_button">表示</string>
     <string name="cloud_models_hidden_tag">非表示中</string>
+    <string name="cloud_models_hidden_section">非表示のモデル (%1$d)</string>
     <string name="cloud_models_empty">クラウドモデルはまだ追加されていません。</string>
     <!-- デフォルトプリセットのモデル未選択モーダル -->
     <string name="default_model_missing_title">モデルが選択されていません</string>
@@ -1731,6 +1735,8 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="preset_model_not_downloaded">プリセットのモデル(%1$s)が未ダウンロードです</string>
     <string name="cloud_model_unconfigured">クラウドモデル(%1$s)の API キーまたは接続先が未設定です。設定画面で構成してください。</string>
     <string name="cloud_model_unavailable">このモデルは使えません（%1$s）</string>
+    <string name="cloud_model_offline">オフラインのためクラウドモデルを利用できません（%1$s）</string>
+    <string name="cloud_model_error">クラウドモデルでエラーが発生しました（%1$s）</string>
     <string name="selected_model_not_downloaded">選択モデル(%1$s)が未ダウンロードです。設定画面でダウンロードしてください。</string>
     <string name="web_model_unsupported">このモデルはWeb用です。AndroidアプリではWeb用モデルは使用できません。本体デバイス用の.taskファイルをお使いください。</string>
     <string name="model_error_path_with_msg">%1$s\nパス: %2$s</string>

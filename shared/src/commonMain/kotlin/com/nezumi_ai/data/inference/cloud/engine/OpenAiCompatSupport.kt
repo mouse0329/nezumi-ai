@@ -31,7 +31,7 @@ internal object OpenAiCompatSupport {
         return buildJsonObject {
             put("model", model); put("stream", stream)
             put("temperature", config.temperature.toDouble()); put("top_p", config.topP.toDouble())
-            put("max_tokens", config.maxTokens)
+            config.maxTokens?.let { put("max_tokens", it) }
             if (config.enableThinking && CloudThinkingEffort.openaiSupportsReasoningEffort(model)) {
                 put(
                     "reasoning_effort",

@@ -2,7 +2,8 @@ package com.nezumi_ai.data.inference
 
 /** クラウドエンジンが参照する設定 (app 側 InferenceConfig の必要フィールドのみ)。 */
 data class CloudInferenceParams(
-    val maxTokens: Int,
+    /** ローカル推論の最大トークン数。null の場合はクラウド API の既定値を使用する。 */
+    val maxTokens: Int? = null,
     val temperature: Float,
     val topP: Float,
     val customStopTokens: List<String>,
@@ -14,7 +15,12 @@ data class CloudInferenceParams(
     val enableThinking: Boolean = false,
     /** low / medium / high。非対応サービスでは無視する。 */
     val thinkingEffort: String = "low"
-)
+) {
+    companion object {
+        /** Claude API は max_tokens が必須のため、クラウド既定値として使用する。 */
+        const val DEFAULT_CLAUDE_MAX_TOKENS = 8192
+    }
+}
 
 /** LiteRT ToolCall のプラットフォーム非依存版。 */
 data class ParsedToolCall(val name: String, val arguments: Map<String, Any?>)

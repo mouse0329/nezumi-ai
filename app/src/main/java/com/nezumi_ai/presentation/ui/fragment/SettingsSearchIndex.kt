@@ -101,6 +101,7 @@ private val SETTINGS_SEARCH_ENTRIES: List<SettingsSearchEntry> = buildList {
     e(1, R.string.settings_inference_params_title, R.string.settings_section_inference)
     e(1, R.string.settings_inference_context_size, R.string.settings_section_inference)
     e(1, R.string.settings_inference_max_tokens, R.string.settings_section_inference)
+    e(1, R.string.settings_inference_cloud_max_tokens, R.string.settings_section_inference)
     e(1, R.string.settings_inference_temperature_label, R.string.settings_section_inference)
     e(1, R.string.settings_inference_topp_label, R.string.settings_section_inference)
     e(1, R.string.settings_inference_topk_label, R.string.settings_section_inference)

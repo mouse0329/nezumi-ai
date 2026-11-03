@@ -130,6 +130,7 @@ class SettingsRepository(
             topP = current.topP,
             maxTopK = current.maxTopK,
             maxTokens = current.maxTokens,
+            cloudMaxTokens = current.cloudMaxTokens,
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
             backendType = backendForSelected,
             llamaCppThreads = current.llamaCppThreads,
@@ -339,6 +340,7 @@ class SettingsRepository(
         topP: Float,
         maxTopK: Int,
         maxTokens: Int,
+        cloudMaxTokens: Int,
         contextWindow: Int = 4096,
         backendType: String,
         backendTargetModel: String = MODEL_E2B
@@ -376,6 +378,7 @@ class SettingsRepository(
             topP = topP,
             maxTopK = maxTopK,
             maxTokens = maxTokens,
+            cloudMaxTokens = cloudMaxTokens,
             backendType = normalizedBackend
         ).normalized()
         dao.update(
@@ -386,6 +389,7 @@ class SettingsRepository(
                 topP = config.topP,
                 maxTopK = config.maxTopK,
                 maxTokens = config.maxTokens,
+                cloudMaxTokens = config.cloudMaxTokens,
                 backendType = encodeBackendMap(backendMap),
                 lastModified = System.currentTimeMillis()
             )

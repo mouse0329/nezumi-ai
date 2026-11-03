@@ -1161,7 +1161,45 @@ internal class GenerationCoordinator(
                     }
                     else -> {
                         Log.e(ChatViewModel.TAG, "Error during flow collection", collectionError)
-                        throw collectionError
+                        val isCloud = com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
+                        val isOffline = isCloud && (
+                            collectionError is java.net.UnknownHostException ||
+                            collectionError is java.net.ConnectException ||
+                            collectionError is java.net.SocketException ||
+                            collectionError is java.net.SocketTimeoutException ||
+                            collectionError.cause is java.net.UnknownHostException ||
+                            collectionError.cause is java.net.ConnectException ||
+                            collectionError.message?.contains("offline", ignoreCase = true) == true ||
+                            collectionError.message?.contains("Unable to resolve host", ignoreCase = true) == true ||
+                            collectionError.message?.contains("No address associated", ignoreCase = true) == true ||
+                            collectionError.message?.contains("Network is unreachable", ignoreCase = true) == true
+                        )
+                        val isCloudError = isCloud && !isOffline && (
+                            collectionError is com.nezumi_ai.data.inference.cloud.engine.CloudRequestException ||
+                            collectionError.message?.contains("HTTP", ignoreCase = true) == true ||
+                            collectionError.message?.contains("request failed", ignoreCase = true) == true
+                        )
+                        if (isOffline || isCloudError) {
+                            val label = com.nezumi_ai.data.inference.cloud.CloudModelId.displayLabel(engineModelName)
+                            val title = if (isOffline) "オフライン" else vm.appContext.getString(R.string.inference_error_title)
+                            val body = if (isOffline)
+                                vm.appContext.getString(R.string.cloud_model_offline, label)
+                            else
+                                vm.appContext.getString(R.string.cloud_model_error, label)
+                            streamAbortNote = body
+                            withContext(Dispatchers.Main) {
+                                vm._isLoading.value = false
+                                vm._toolCallState.value = null
+                                vm._modelErrorDialogMessage.value = vm.formatModelErrorDialogMessage(
+                                    title = title,
+                                    message = body,
+                                    details = collectionError.message
+                                )
+                            }
+                            // 再スローせずクリーンアップへ
+                        } else {
+                            throw collectionError
+                        }
                     }
                 }
             }

@@ -7,6 +7,7 @@ data class InferenceConfig(
     val temperature: Float = 0.7f,
     val maxTopK: Int = 40,
     val maxTokens: Int = 1024,
+    val cloudMaxTokens: Int = 8192,
     val topP: Float = 0.95f,
     /** LiteRT-LM の投機的デコーディング有効化（推論高速化。デフォルトはオフ） */
     val enableThinking: Boolean = false,
@@ -91,6 +92,8 @@ data class InferenceConfig(
         const val MAX_TOP_K = 128
         const val MIN_MAX_TOKENS = 64
         const val MAX_MAX_TOKENS = 4096
+        const val MIN_CLOUD_MAX_TOKENS = 64
+        const val MAX_CLOUD_MAX_TOKENS = 131072
         const val MIN_TOP_P = 0.0f
         const val MAX_TOP_P = 1.0f
         const val MIN_THREADS = 1
@@ -117,6 +120,7 @@ data class InferenceConfig(
         val normalizedTemp = temperature.coerceIn(MIN_TEMPERATURE, MAX_TEMPERATURE)
         val normalizedTopK = maxTopK.coerceIn(MIN_TOP_K, MAX_TOP_K)
         val normalizedMaxTokens = maxTokens.coerceIn(MIN_MAX_TOKENS, MAX_MAX_TOKENS)
+        val normalizedCloudMaxTokens = cloudMaxTokens.coerceIn(MIN_CLOUD_MAX_TOKENS, MAX_CLOUD_MAX_TOKENS)
         val normalizedTopP = topP.coerceIn(MIN_TOP_P, MAX_TOP_P)
         val normalizedBatchSize = llamaCppBatchSize.coerceIn(MIN_BATCH_SIZE, MAX_BATCH_SIZE)
         val normalizedUBatchSize = llamaCppUBatchSize.coerceIn(MIN_UBATCH_SIZE, MAX_UBATCH_SIZE)
@@ -132,6 +136,7 @@ data class InferenceConfig(
             temperature = normalizedTemp,
             maxTopK = normalizedTopK,
             maxTokens = normalizedMaxTokens,
+            cloudMaxTokens = normalizedCloudMaxTokens,
             topP = normalizedTopP,
             llamaCppBatchSize = normalizedBatchSize,
             llamaCppUBatchSize = normalizedUBatchSize,

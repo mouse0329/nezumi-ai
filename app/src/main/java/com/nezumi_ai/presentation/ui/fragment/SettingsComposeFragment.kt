@@ -123,6 +123,7 @@ class SettingsComposeFragment : Fragment() {
     internal var topPInput by mutableStateOf("0.95")
     internal var topkInput by mutableStateOf("40")
     internal var maxTokensInput by mutableStateOf("1024")
+    internal var cloudMaxTokensInput by mutableStateOf("8192")
     internal var speculativeDecodingEnabled by mutableStateOf(false)
     internal var requireMultimodal by mutableStateOf(false)
     internal var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
@@ -815,6 +816,7 @@ class SettingsComposeFragment : Fragment() {
                     append(topPInput); append('|')
                     append(topkInput); append('|')
                     append(maxTokensInput); append('|')
+                    append(cloudMaxTokensInput); append('|')
                     append(speculativeDecodingEnabled); append('|')
                     append(requireMultimodal); append('|')
                     append(preloadMemoryWarningThresholdPercent); append('|')
@@ -1952,6 +1954,7 @@ class SettingsComposeFragment : Fragment() {
         topPInput = d.topP.toString()
         topkInput = d.maxTopK.toString()
         maxTokensInput = d.maxTokens.toString()
+        cloudMaxTokensInput = d.cloudMaxTokens.toString()
         backendType = d.backendType
         llamaCppThreads = InferenceConfig.getDefaultThreadCount().coerceIn(1, maxThreads)
         llamaCppGpuBackend = LlamaCppGpuBackend.CPU
@@ -2001,6 +2004,7 @@ class SettingsComposeFragment : Fragment() {
             topPInput = config.topP.toString()
             topkInput = config.maxTopK.toString()
             maxTokensInput = config.maxTokens.toString()
+            cloudMaxTokensInput = config.cloudMaxTokens.toString()
             preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
             memorySaveMode = settingsRepository.getMemorySaveMode().name
             speculativeDecodingEnabled = settingsRepository.isSpeculativeDecodingEnabled()
@@ -2053,9 +2057,10 @@ class SettingsComposeFragment : Fragment() {
         val topP = topPInput.toFloatOrNull()
         val topK = topkInput.toIntOrNull()
         val maxTokens = maxTokensInput.toIntOrNull()
+        val cloudMaxTokens = cloudMaxTokensInput.toIntOrNull()
         val contextWindow = contextWindowInput.toIntOrNull()
 
-        if (temperature == null || topP == null || topK == null || maxTokens == null || contextWindow == null) {
+        if (temperature == null || topP == null || topK == null || maxTokens == null || cloudMaxTokens == null || contextWindow == null) {
             return requireContext().getString(R.string.settings_inference_invalid_input)
         }
         if (temperature !in InferenceConfig.MIN_TEMPERATURE..InferenceConfig.MAX_TEMPERATURE) {
@@ -2069,6 +2074,13 @@ class SettingsComposeFragment : Fragment() {
         }
         if (maxTokens !in InferenceConfig.MIN_MAX_TOKENS..InferenceConfig.MAX_MAX_TOKENS) {
             return requireContext().getString(R.string.settings_inference_max_tokens_range, InferenceConfig.MIN_MAX_TOKENS.toString(), InferenceConfig.MAX_MAX_TOKENS.toString())
+        }
+        if (cloudMaxTokens !in InferenceConfig.MIN_CLOUD_MAX_TOKENS..InferenceConfig.MAX_CLOUD_MAX_TOKENS) {
+            return requireContext().getString(
+                R.string.settings_inference_cloud_max_tokens_range,
+                InferenceConfig.MIN_CLOUD_MAX_TOKENS.toString(),
+                InferenceConfig.MAX_CLOUD_MAX_TOKENS.toString()
+            )
         }
  // ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
         val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
@@ -2093,6 +2105,7 @@ class SettingsComposeFragment : Fragment() {
         val topP = topPInput.toFloatOrNull() ?: 0.95f
         val topK = topkInput.toIntOrNull() ?: 40
         val maxTokens = maxTokensInput.toIntOrNull() ?: 1024
+        val cloudMaxTokens = cloudMaxTokensInput.toIntOrNull() ?: 8192
         val contextWindow = contextWindowInput.toIntOrNull() ?: 4096
 
         settingsRepository.updateInferenceConfig(
@@ -2100,6 +2113,7 @@ class SettingsComposeFragment : Fragment() {
             topP = topP,
             maxTopK = topK,
             maxTokens = maxTokens,
+            cloudMaxTokens = cloudMaxTokens,
             contextWindow = contextWindow,
             backendType = backendType,
             backendTargetModel = "ALL"

@@ -18,6 +18,7 @@ data class SettingsEntity(
     val topP: Float = 0.95f,
     val maxTopK: Int = 40,
     val maxTokens: Int = 2048,
+    val cloudMaxTokens: Int = 8192,
     val resourceMonitorEnabled: Boolean = false,
     /** Gemma 4 向け: プロンプト先頭に `<|think|>` を付与してシンキング生成を有効化。デフォルトはオフ */
     val gemmaThinkingEnabled: Boolean = false,

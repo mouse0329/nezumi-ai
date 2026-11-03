@@ -107,7 +107,7 @@ class OllamaInferenceEngine(
             putJsonObject("options") {
                 put("temperature", config.temperature.toDouble())
                 put("top_p", config.topP.toDouble())
-                put("num_predict", config.maxTokens)
+                config.maxTokens?.let { put("num_predict", it) }
                 put("num_ctx", config.contextWindow)
                 if (config.customStopTokens.isNotEmpty()) {
                     putJsonArray("stop") {

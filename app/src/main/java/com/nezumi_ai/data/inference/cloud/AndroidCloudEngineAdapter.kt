@@ -85,7 +85,7 @@ class AndroidCloudEngineAdapter(private val delegate: AbstractCloudInferenceEngi
     override suspend fun isAvailable(): Boolean = delegate.isAvailable()
 
     private fun InferenceConfig.toCloudParams(): CloudInferenceParams = CloudInferenceParams(
-        maxTokens = maxTokens, temperature = temperature, topP = topP,
+        maxTokens = cloudMaxTokens, temperature = temperature, topP = topP,
         customStopTokens = customStopTokens, enableToolCalling = enableToolCalling,
         maxToolRounds = maxToolRounds, contextWindow = contextWindow,
         enableThinking = enableThinking, thinkingEffort = thinkingEffort

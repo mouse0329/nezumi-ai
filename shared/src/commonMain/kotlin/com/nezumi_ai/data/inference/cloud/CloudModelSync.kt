@@ -77,7 +77,9 @@ object CloudModelSync {
         val primary = CloudApiKeyStore.getBaseUrl(secure, parsed.provider)
         val endpoint = CloudModelId.endpointOf(parsed.modelName) ?: primary
         if (endpoint.isBlank()) return -1
-        val count = refreshEndpoint(plain, secure, parsed.provider, endpoint, primary)
+        val count = runCatching {
+            refreshEndpoint(plain, secure, parsed.provider, endpoint, primary)
+        }.getOrDefault(-1)
         if (parsed.provider == CloudApiKeyStore.Provider.OLLAMA_LOCAL ||
             parsed.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE
         ) {

@@ -78,7 +78,8 @@ class GeminiInferenceEngine(
                 }
             }
             putJsonObject("generationConfig") {
-                put("temperature", config.temperature.toDouble()); put("topP", config.topP.toDouble()); put("maxOutputTokens", config.maxTokens)
+                put("temperature", config.temperature.toDouble()); put("topP", config.topP.toDouble())
+                config.maxTokens?.let { put("maxOutputTokens", it) }
                 if (config.customStopTokens.isNotEmpty()) putJsonArray("stopSequences") { config.customStopTokens.forEach { add(it) } }
                 when (CloudThinkingEffort.geminiMode(model)) {
                     CloudThinkingEffort.GeminiThinkingMode.NONE -> Unit
