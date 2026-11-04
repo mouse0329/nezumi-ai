@@ -14,7 +14,7 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 - Android 版を壊さず、iOS 対応を段階的に追加する。
 - Android Framework 依存コードを commonMain に無理に持ち込まない。
 - ネットワーク・ドメイン・プロンプト・ストリーム処理は可能な限り KMP で共有する。
-- Room は iOS で直接利用せず、SQLDelight を中心に共通 DB 層を再構成する。
+- DB は Room をそのまま KMP 化する（Room の共通 API とバンドル SQLite ドライバを使用）。DB ビルダーのみ expect/actual で分ける。
 - Android Keystore / SharedPreferences は iOS の Keychain / UserDefaults 等に置換する。
 - llama.cpp / MNN / VOICEVOX は既存 C/C++ コアを最大限再利用し、JNI の代わりに iOS 向け C-ABI / Objective-C++ / Swift ブリッジを用意する。
 - LiteRT-LM + Qualcomm QNN の Android/NPU 経路は iOS へそのまま移植せず、iOS ではまず GGUF + CPU/Metal を標準経路とする。
@@ -27,6 +27,7 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 - `:shared` KMP モジュール新設
 - `iosArm64` / `iosSimulatorArm64` ターゲット追加
 - `InferenceStreamProtocol` の commonMain 移設
+- `TextTokenEstimator` の JVM API 依存除去と commonMain 移設（パッチ適用後のビルド確認待ち）
 - `ThinkingLeakSalvage` の commonMain 移設
 - `Gemma4ThinkingParser` の Android 依存除去・commonMain 移設
 - `StringExtensions` の commonMain 移設
@@ -35,7 +36,6 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 
 ### 未完了
 
-- `TextTokenEstimator` の JVM API 依存除去
 - クラウド推論エンジンの KMP 化
 - Repository / Room の KMP 化
 - KeyStore / 設定管理の iOS 実装
@@ -55,7 +55,7 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 | クラウド推論 | OkHttp | Ktor Client + commonMain | P0 |
 | MCP | Android/Kotlin | Ktor + commonMain、iOS transport を追加 | P1 |
 | ChatViewModel | Android Framework 依存 | Coordinator / UseCase / State を commonMain 化 | P0 |
-| DB | Room | SQLDelight | P0 |
+| DB | Room | Room（KMP 対応版） | P0 |
 | API Key | Android Keystore | Keychain actual | P1 |
 | 設定 | SharedPreferences | UserDefaults actual | P1 |
 | GGUF | llama.cpp + JNI | llama.cpp + C-ABI/ObjC++/Swift bridge | P0 |
@@ -70,7 +70,7 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 ### Phase 0: KMP 基盤の安定化
 
 - [ ] `:shared` の Android / iOS コンパイルを macOS で確認
-- [ ] `TextTokenEstimator` を commonMain 対応にする
+- [x] `TextTokenEstimator` を commonMain 対応にする（ビルド確認待ち）
 - [ ] commonMain / androidMain / iosMain の責務境界を確定
 - [ ] CI に Android + iOS Simulator コンパイルを追加
 
@@ -85,8 +85,8 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 
 ### Phase 2: DB / Repository / ChatViewModel
 
-- [ ] Room Entity / DAO のスキーマを SQLDelight に移行
-- [ ] 既存 DB から SQLDelight へのデータ移行戦略を実装
+- [ ] Room Entity / DAO / Database を commonMain へ移設（スキーマ変更なし）
+- [ ] DB ファイルの保存先（Android / iOS）と既存 DB の引き継ぎ方針を確定
 - [ ] Session / Message / Preset / Memory / Alarm 等の repository を commonMain 化
 - [ ] ChatViewModel の残りの Android API 依存を Coordinator / Platform Provider に分離
 - [ ] Android / iOS 共通の状態モデルを確定

@@ -84,10 +84,9 @@ kotlin {
 
 ## 4. 移設を見送ったファイル
 
-- `TextTokenEstimator`: `java.lang.Character.UnicodeBlock`（JVM 限定の Unicode 判定）
-  を使用するため、そのままでは iOS (Kotlin/Native) でコンパイルできない。
-  Unicode ブロック判定を expect/actual 化するか、自前のコードポイント範囲判定に
-  置き換えてから移設する。
+- `TextTokenEstimator`: 当初は `java.lang.Character.UnicodeBlock` 等の JVM 限定 API を
+  使用していたため見送っていた。共通 stdlib の `CharCategory` と CJK ブロックの
+  範囲判定に置き換え、commonMain へ移設した（パッチ適用後のビルド確認待ち）。
 
 ## 5. ビルド確認手順
 
@@ -117,6 +116,6 @@ iOS ターゲットのコンパイルには Kotlin/Native のツールチェイ�
 ## 6. 残課題・次へ
 
 1. shared モジュールの実ビルド確認（macOS / Windows 環境で実施依頼）
-2. `TextTokenEstimator` の expect/actual 化による残り純粋ロジックの移設
+2. `TextTokenEstimator` の commonMain 移設をビルド確認し、コミットする
 3. クラウド推論エンジン層の KMP 化（OkHttp → Ktor 移行）
 4. 各推論エンジン（GGUF / MNN / LiteRT-LM）の iOS ブリッジ実装

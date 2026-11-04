@@ -1,6 +1,6 @@
 # nezumi-ai KMP化プロジェクト 進捗まとめ
 
-最終更新: 2026-08-17
+最終更新: 2026-11-04
 
 ---
 
@@ -28,9 +28,9 @@ nezumi-aiをKotlin Multiplatform (KMP) 化し、Android/iOSでコード共有を
 | 領域 | 難易度 | 状態 |
 |---|---|---|
 | KMP土台 (sharedモジュール) | 低 | **完了**（iOS化の第一歩・2026-08-17） |
-| クラウド推論エンジン(Claude/Gemini/OpenAI互換等) | 低 | 未着手（最優先候補） |
+| クラウド推論エンジン(Claude/Gemini/OpenAI互換等) | 低 | エンジン実装は `shared/.../cloud/engine/` に commonMain 配置済み。残りは警告整理と OkHttp→Ktor の確認 |
 | ChatViewModelの責務分割 | 中 | **進行中**（詳細は下記） |
-| Repository/DB (Room→SQLDelight) | 中 | 未着手 |
+| Repository/DB (Room) | 中 | 方針: Room をそのまま KMP 化（SQLDelight は採用しない）。未着手 |
 | GGUF (llama.cpp) | 低〜中(更新) | 未着手（コアはほぼ流用可、ブリッジのみ新規。取り込み元のllama.rnが公式iOSブリッジ実装(ios/RNLlama.mm等)を持ち参考にできる） |
 | 画像生成 (Nezumi Kiln / MNN) | 低〜中(訂正) | 未着手（当初「独自ラッパーが未実装」としていたが誤り。CMakeに汎用フォールバックが既存、コア実装のAndroid依存は最小限） |
 | VOICEVOX (TTS) | 中(訂正) | 未着手（当初「対象外」としていたが誤り。公式iOS xcframework配布あり、Kotlin側は高レベルAPIのみ使用。ただしSwift公式SDKが未整備で自前ブリッジが必要） |
@@ -49,7 +49,7 @@ iOS 化の最初の成果物として、AGP 9 + Kotlin 2.3.20 の新構成に対
   - `Gemma4ThinkingParser`（Gemma 4 シンキング出力の分解・表示テキスト正規化。`BuildConfig.DEBUG` 依存と `android.util.Log` 依存を除去して純粋化）
   - `StringExtensions`（`stripGemmaTokens` / `stripTxtFileBlocks` / `stripVideoBlocks`）
 - app モジュールは `implementation(project(":shared"))` で共有モジュールに依存し、元ソースは削除（重複定義なし）
-- `TextTokenEstimator` は `java.lang.Character.UnicodeBlock`（JVM 限定 API）を使用するため**今回の移設対象から見送り**（iOS では利用不可。別途 Unicode 判定の expect/actual 化が必要）
+- `TextTokenEstimator` は JVM 依存（`codePointAt` / `Character.getType` / `UnicodeBlock`）を共通 stdlib（`CharCategory`、CJK ブロックの範囲判定）に置き換えて commonMain へ移設。**パッチ適用後のビルド確認待ち**
 
 ---
 
@@ -67,7 +67,7 @@ iOS 化の最初の成果物として、AGP 9 + Kotlin 2.3.20 の新構成に対
 | **H. 電源管理(WakeLock)** | `PlatformWakeLock` (Android実装) | ✅ 完了・ビルド確認済み |
 | **G. セッション/DB(タイトル生成部分)** | `ChatSessionCoordinator`へ移管 | ✅ 静的レビュー完了、**Windowsビルド確認は未実施**。`touchSession`の未配線について確認待ち |
 | **B. 音声合成(TTS)** | `PlatformTtsPlayer` | 🔄 **再評価により対象復帰**。`PlatformTtsPlayer`インターフェースは用意済み(Android実装のみ)。VOICEVOX CORE公式iOS xcframeworkの存在を確認したため、iOS実装追加も選択肢に入った |
-| **D. コンテキスト圧縮** | `ContextCompressionUseCase` | 🔲 未着手（`requestCompressedContextSummary`は元のロジックのまま） |
+| **D. コンテキスト圧縮** | `ContextCompressionUseCase` | ❌ 廃止（機能廃止のため対象外） |
 | **E. モデル/エンジン管理** | `ModelSessionCoordinator` | 🔶 一部着手（`isGgufEngineModel`, `shouldDeleteLocalModelFileOnLoadError`のみ委譲済み） |
 | **F. 画像生成ツール連携** | `ImageToolInvoker` | 🔶 一部着手（SDモデルパス解決のみ委譲済み） |
 
@@ -98,7 +98,6 @@ iOS 化の最初の成果物として、AGP 9 + Kotlin 2.3.20 の新構成に対
 
 - **直近の課題**: クラスタGの`touchSession`未配線の扱い確定 + Windowsビルド確認（この2点が完了すればクラスタGも完了扱いにできる）
 - **次のクラスタ**: E/F(モデル管理・画像生成ツール)の残りメソッドへの着手を推奨。GGUF/MNNの実現性評価が好転したため、続けて着手する価値が上がっている
-- クラスタD(コンテキスト圧縮)はE/Fの後、`ModelManager`呼び出しパターンが固まってから着手するのが自然
 - クラスタ単位でコミットが積み上がった節目ごとに、Windows環境で`./gradlew assembleDebug`によるビルド確認を挟む運用が機能している。今後もこのサイクルを継続する。
 
 ---
@@ -147,16 +146,16 @@ iOS 化の最初の成果物として、AGP 9 + Kotlin 2.3.20 の新構成に対
 ## 5. 未着手・今後の論点
 
 - KMP土台（sharedモジュール）は完成。プロンプト構築・パーサ系の純粋ロジック4本を commonMain へ移設済み
-- クラウド推論エンジン層のKMP化（OkHttp→Ktor移行）— 投資対効果が最も高いが未着手
-- Room→SQLDelight移行の具体設計
+- クラウド推論エンジン層: エンジン本体は commonMain 配置済み。警告整理と OkHttp→Ktor の状態確認が残り
+- Room の KMP 化: DB は Room のまま。Entity / DAO / Database を commonMain へ移し、DB ビルダーのみ expect/actual で分ける（スキーマ変更なし）
 - UI面のFragment撤去（設計は完了、実装は未着手）
-- ChatViewModel分割の残り（クラスタD・E/F本格着手、クラスタGの`touchSession`確認とビルド確認）
+- ChatViewModel分割の残り（クラスタDは廃止。E/F本格着手、クラスタGの`touchSession`確認とビルド確認）
 - GGUF/MNN/LiteRT-LMの実際のiOSブリッジ実装 — 今回の再評価で「やりやすそう」と判明したが、まだコードは書かれていない
 
 ### 次の一手候補
 
 1. **新設した`:shared`モジュールのビルド確認**（`./gradlew :shared:compileKotlinIosArm64` など）と app 側の回帰確認（`./gradlew assembleDebug`）
-2. `TextTokenEstimator` の Unicode 判定を expect/actual 化して commonMain へ移設（残った純粋ロジックの仕上げ）
+2. `TextTokenEstimator` の commonMain 移設をビルド確認し、コミットする
 3. クラスタGの`touchSession`未配線の扱い確定 + Windowsビルド確認
 4. クラスタE/F(モデル管理・画像生成ツール)の続きに着手
 5. 評価が好転したGGUF/MNN/LiteRT-LMについて、実際にiOS向けブリッジのプロトタイプ着手を検討
