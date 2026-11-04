@@ -20,14 +20,12 @@ import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.sd.safety.PromptFilter
 import com.nezumi_ai.data.inference.ModelManager
-import com.nezumi_ai.data.inference.ImageGenerationNotificationManager
 import com.nezumi_ai.sd.ProgressData
 import com.nezumi_ai.sd.safety.SafetyResult
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
-import com.nezumi_ai.utils.PreferencesHelper
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +34,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.nezumi_ai.sd.GenerationQueue
@@ -46,8 +47,33 @@ import com.nezumi_ai.sd.SdModelLayout
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 import org.json.JSONObject
+import com.nezumi_ai.ui.ImageGenViewModelContract
+import com.nezumi_ai.ui.PlatformImage
+import com.nezumi_ai.ui.toPlatformImage
+import com.nezumi_ai.platform.SdPreferences
+import com.nezumi_ai.platform.PlatformAppContext
+import com.nezumi_ai.platform.AndroidSdPreferences
+import com.nezumi_ai.platform.AndroidPlatformAppContext
+import com.nezumi_ai.platform.PlatformWakeLock
+import com.nezumi_ai.platform.AndroidPlatformWakeLock
+import com.nezumi_ai.platform.PlatformGallery
+import com.nezumi_ai.platform.AndroidPlatformGallery
+import com.nezumi_ai.platform.ImageMetadataStore
+import com.nezumi_ai.platform.AndroidImageMetadataStore
+import com.nezumi_ai.platform.PlatformMemory
+import com.nezumi_ai.platform.AndroidPlatformMemory
+import com.nezumi_ai.platform.PlatformNotification
+import com.nezumi_ai.platform.AndroidPlatformNotification
 
-class ImageGenViewModel(application: Application) : AndroidViewModel(application) {
+class ImageGenViewModel(application: Application) : AndroidViewModel(application), ImageGenViewModelContract {
+
+    private val sdPreferences: SdPreferences = AndroidSdPreferences(application)
+    private val platformContext: PlatformAppContext = AndroidPlatformAppContext(application)
+    private val platformWakeLock: PlatformWakeLock = AndroidPlatformWakeLock(application)
+    private val platformGallery: PlatformGallery = AndroidPlatformGallery(application)
+    private val imageMetadataStore: ImageMetadataStore = AndroidImageMetadataStore(application)
+    private val platformMemory: PlatformMemory = AndroidPlatformMemory(application)
+    private val platformNotification: PlatformNotification = AndroidPlatformNotification(application)
 
     companion object {
         private const val TAG = "ImageGenViewModel"
@@ -57,7 +83,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         NezumiAiDatabase.getInstance(application)
     )
 
-    private val _modelPath = MutableStateFlow(PreferencesHelper.getSdModelPath(application))
+    private val _modelPath = MutableStateFlow(sdPreferences.getSdModelPath())
     val modelPath: StateFlow<String> = _modelPath.asStateFlow()
 
     // 現在選択されているモデルが SDXL かどうか。true なら UI スライダーの上限を 512→ 1024 に拡張する。
@@ -126,7 +152,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _backendInfo = MutableStateFlow("")
     val backendInfo: StateFlow<String> = _backendInfo.asStateFlow()
 
-    private val _selectedBackend = MutableStateFlow(PreferencesHelper.getSdBackend(application))
+    private val _selectedBackend = MutableStateFlow(sdPreferences.getSdBackend())
     val selectedBackend: StateFlow<String> = _selectedBackend.asStateFlow()
 
     // Perf fix: 开発ビルド以外ではホットパスのログを抑制する。
@@ -152,7 +178,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             val models = mutableListOf<String>()
             if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] Starting model search")
             // ダウンロード済み画像生成モデルディレクトリ（refreshSdModels と同じネスト展開ロジック）
-            val sdModelsDir = File(getApplication<Application>().filesDir, "sd_models")
+            val sdModelsDir = File(platformContext.filesDirPath(), "sd_models")
             sdModelsDir.listFiles()?.forEach { dir ->
                 if (!dir.isDirectory) return@forEach
                 val targetDir = resolveNestedSdModelDir(dir)
@@ -162,7 +188,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             // アプリ専用ディレクトリ
-            val appDir = getApplication<Application>().getExternalFilesDir(null)
+            val appDir = platformContext.externalFilesDirPath()?.let { java.io.File(it) }
             appDir?.listFiles()?.forEach { file ->
                 if (isProbableSdModelDir(file)) {
  if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] appDir: ${file.absolutePath}")
@@ -170,7 +196,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             // インポート済みモデルディレクトリ
-            val importedDir = File(getApplication<Application>().filesDir, "models/imported")
+            val importedDir = File(platformContext.filesDirPath(), "models/imported")
             importedDir.listFiles()?.forEach { file ->
                 if (isProbableSdModelDir(file)) {
  if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] imported: ${file.absolutePath}")
@@ -186,15 +212,15 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             if (index >= 0) {
                 _selectedModelIndex.value = index
                 _modelPath.value = preferredPath
-                PreferencesHelper.setSdModelPath(getApplication(), preferredPath)
+                sdPreferences.setSdModelPath(preferredPath)
             } else if (models.isNotEmpty()) {
                 _selectedModelIndex.value = 0
                 _modelPath.value = models[0]
-                PreferencesHelper.setSdModelPath(getApplication(), models[0])
+                sdPreferences.setSdModelPath(models[0])
             } else {
                 _selectedModelIndex.value = 0
                 _modelPath.value = ""
-                PreferencesHelper.setSdModelPath(getApplication(), "")
+                sdPreferences.setSdModelPath("")
             }
             updateBackendInfo()
         }
@@ -243,7 +269,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
         return when {
             hasMnn -> "MNN (CPU/GPU)"
-            hasQnn -> getApplication<Application>().getString(R.string.imagegen_legacy_qnn_unsupported)
+            hasQnn -> platformContext.getString("imagegen_legacy_qnn_unsupported")
             else -> "Unknown"
         }
     }
@@ -262,16 +288,16 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     // Bug fix (画像生成画面を閉じるとプロンプト等が失われる):
     //   初期値を Preferences の保存値から復元する (steps / cfg / scheduler と同じ
     //   方式)。Fragment 離脱で ViewModel が再生成されても入力内容が消えない。
-    private val _prompt = MutableStateFlow(PreferencesHelper.getSdPrompt(application))
+    private val _prompt = MutableStateFlow(sdPreferences.getSdPrompt())
     val prompt: StateFlow<String> = _prompt.asStateFlow()
 
-    private val _negativePrompt = MutableStateFlow(PreferencesHelper.getSdNegativePrompt(application))
+    private val _negativePrompt = MutableStateFlow(sdPreferences.getSdNegativePrompt())
     val negativePrompt: StateFlow<String> = _negativePrompt.asStateFlow()
 
-    private val _steps = MutableStateFlow(PreferencesHelper.getSdSteps(application))
+    private val _steps = MutableStateFlow(sdPreferences.getSdSteps())
     val steps: StateFlow<Int> = _steps.asStateFlow()
 
-    private val _cfg = MutableStateFlow(PreferencesHelper.getSdCfg(application))
+    private val _cfg = MutableStateFlow(sdPreferences.getSdCfg())
     val cfg: StateFlow<Float> = _cfg.asStateFlow()
 
     // デフォルト画質は 256×256。縦横は独立して指定可能。
@@ -331,6 +357,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     // クラス冒頭 (_isSdxl の直後) に移動済み。ここでは _initImageBitmap のみ宣言する。
     private val _initImageBitmap = MutableStateFlow<Bitmap?>(null)
     val initImageBitmap: StateFlow<Bitmap?> = _initImageBitmap.asStateFlow()
+    override val initImage: StateFlow<PlatformImage?> = _initImageBitmap.map { it?.toPlatformImage() }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // Diffusers img2img の実用域に合わせ既定 0.65。
     private val _denoiseStrength = MutableStateFlow(0.65f)
@@ -338,6 +365,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun setImg2imgEnabled(v: Boolean) { _img2imgEnabled.value = v }
     fun setDenoiseStrength(v: Float) { _denoiseStrength.value = v.coerceIn(0f, 1f) }
+
+    override fun setInitImage(image: PlatformImage?) {
+        setInitImage(image?.bitmap)
+    }
+
+    override fun clearInitImage() {
+        setInitImage(null as Bitmap?)
+    }
 
     fun setInitImage(bitmap: Bitmap?) {
         val prev = _initImageBitmap.value
@@ -398,11 +433,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         return bytes
     }
 
-    private val _scheduler = MutableStateFlow(SdScheduler.fromId(PreferencesHelper.getSdScheduler(application)))
+    private val _scheduler = MutableStateFlow(SdScheduler.fromId(sdPreferences.getSdScheduler()))
     val scheduler: StateFlow<SdScheduler> = _scheduler.asStateFlow()
 
     private val _resultBitmap = MutableStateFlow<Bitmap?>(null)
     val resultBitmap: StateFlow<Bitmap?> = _resultBitmap.asStateFlow()
+    override val resultImage: StateFlow<PlatformImage?> = _resultBitmap.map { it?.toPlatformImage() }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _queueResultBitmaps = MutableStateFlow<List<Bitmap>>(emptyList())
     val queueResultBitmaps: StateFlow<List<Bitmap>> = _queueResultBitmaps.asStateFlow()
@@ -457,19 +493,19 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _selectedModelIndex.value = index
             val path = _availableModels.value[index]
             _modelPath.value = path
-            PreferencesHelper.setSdModelPath(getApplication(), path)
+            sdPreferences.setSdModelPath(path)
             updateBackendInfo()
             refreshSdxlFlagFromPath(path)
         }
     }
 
     fun setSelectedBackend(backend: String) {
-        val normalized = PreferencesHelper.getSdBackend(getApplication()).let { current ->
+        val normalized = sdPreferences.getSdBackend().let { current ->
             if (backend.equals(current, ignoreCase = true)) current else backend
         }
         val previous = _selectedBackend.value
         _selectedBackend.value = normalized
-        PreferencesHelper.setSdBackend(getApplication(), normalized)
+        sdPreferences.setSdBackend(normalized)
         updateBackendInfo()
  // Bug fix: backend を切り替えたら即座に既存の LocalDream サーバーを停止し、
         //   次回 generate() 時に新 backend で起動し直されるようにする。
@@ -483,7 +519,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun setModelPath(p: String) {
         _modelPath.value = p
-        PreferencesHelper.setSdModelPath(getApplication(), p)
+        sdPreferences.setSdModelPath(p)
         // インデックスを更新
         val index = _availableModels.value.indexOf(p)
         if (index >= 0) {
@@ -551,24 +587,24 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _prompt.value = p
         // Bug fix: 画面を閉じても復元できるよう、変更の都度保存する
         //   (setSteps / setCfg と同じパターン)。
-        PreferencesHelper.setSdPrompt(getApplication(), p)
+        sdPreferences.setSdPrompt(p)
     }
 
     fun setNegativePrompt(p: String) {
         _negativePrompt.value = p
-        PreferencesHelper.setSdNegativePrompt(getApplication(), p)
+        sdPreferences.setSdNegativePrompt(p)
     }
 
     fun setSteps(s: Int) {
         val coerced = s.coerceIn(1, 50)
         _steps.value = coerced
-        PreferencesHelper.setSdSteps(getApplication(), coerced)
+        sdPreferences.setSdSteps(coerced)
     }
 
     fun setCfg(c: Float) {
         val coerced = c.coerceIn(1f, 20f)
         _cfg.value = coerced
-        PreferencesHelper.setSdCfg(getApplication(), coerced)
+        sdPreferences.setSdCfg(coerced)
     }
 
     fun setSize(s: Int) {
@@ -595,7 +631,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun setScheduler(scheduler: SdScheduler) {
         _scheduler.value = scheduler
-        PreferencesHelper.setSdScheduler(getApplication(), scheduler.id)
+        sdPreferences.setSdScheduler(scheduler.id)
     }
 
     /**
@@ -610,14 +646,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
      */
     fun refreshPreferencesBackedFields() {
         val app = getApplication<Application>()
-        val prefsSteps = PreferencesHelper.getSdSteps(app)
+        val prefsSteps = sdPreferences.getSdSteps()
         if (_steps.value != prefsSteps) _steps.value = prefsSteps
-        val prefsCfg = PreferencesHelper.getSdCfg(app)
+        val prefsCfg = sdPreferences.getSdCfg()
         if (_cfg.value != prefsCfg) _cfg.value = prefsCfg
-        val prefsSchedulerId = PreferencesHelper.getSdScheduler(app)
+        val prefsSchedulerId = sdPreferences.getSdScheduler()
         val prefsScheduler = SdScheduler.fromId(prefsSchedulerId)
         if (_scheduler.value != prefsScheduler) _scheduler.value = prefsScheduler
-        val prefsBackend = PreferencesHelper.getSdBackend(app)
+        val prefsBackend = sdPreferences.getSdBackend()
         if (_selectedBackend.value != prefsBackend) _selectedBackend.value = prefsBackend
     }
 
@@ -634,30 +670,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun acquireGenerationWakeLock() {
-        try {
-            val pm = getApplication<Application>().getSystemService(Context.POWER_SERVICE) as? PowerManager
-                ?: return
-            if (generationWakeLock?.isHeld == true) return
-            generationWakeLock = pm.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "nezumi_ai:ImageGen"
-            ).apply {
-                setReferenceCounted(false)
-                acquire(60 * 60 * 1000L)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to acquire image generation WakeLock", e)
-        }
+        platformWakeLock.acquire()
     }
 
     private fun releaseGenerationWakeLock() {
-        try {
-            generationWakeLock?.takeIf { it.isHeld }?.release()
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to release image generation WakeLock", e)
-        } finally {
-            generationWakeLock = null
-        }
+        platformWakeLock.release()
     }
 
     /**
@@ -695,7 +712,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val modelBytes = estimateSdModelBytes(modelPath)
         if (modelBytes <= 0L) return null
 
-        val sys = MemoryObserver.getSystemMemoryInfoSync(app)
+        val sys = platformMemory.getSystemMemoryInfo()
         val totalGb = sys.totalMemoryMB / 1024f
         val modelGb = modelBytes / (1024f * 1024f * 1024f)
         val requiredGb = modelGb * 1.5f
@@ -711,13 +728,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val availableGb = sys.availableMemoryMB / 1024f
         val maxSide = maxOf(width, height)
         val suggestion = when {
-            maxSide >= 512 -> getApplication<Application>().getString(R.string.imagegen_ram_hint_512)
-            maxSide >= 256 -> getApplication<Application>().getString(R.string.imagegen_ram_hint_256)
-            else -> getApplication<Application>().getString(R.string.imagegen_ram_hint_low)
+            maxSide >= 512 -> platformContext.getString("imagegen_ram_hint_512")
+            maxSide >= 256 -> platformContext.getString("imagegen_ram_hint_256")
+            else -> platformContext.getString("imagegen_ram_hint_low")
         }
         return String.format(
             Locale.US,
-            getApplication<Application>().getString(R.string.imagegen_ram_too_small),
+            platformContext.getString("imagegen_ram_too_small"),
             totalGb,
             availableGb,
             modelGb,
@@ -747,14 +764,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _loading.value = false
         _currentStep.value = 0
         _progressData.value = null
-        val app = getApplication<Application>()
-        ImageGenerationNotificationManager.showError(
-            app,
-            ImageGenerationNotificationManager.singleNotificationId(),
-            getApplication<Application>().getString(R.string.imagegen_stopped_title),
-            getApplication<Application>().getString(R.string.imagegen_cancelled_in_progress)
+        platformNotification.showError(
+            platformContext.getString("imagegen_stopped_title"),
+            platformContext.getString("imagegen_cancelled_in_progress")
         )
-        ImageGenerationNotificationManager.cancelQueue(app)
+        platformNotification.cancel()
         releaseGenerationWakeLock()
         Log.i(TAG, "[ImageGen] cancel() completed")
     }
@@ -766,7 +780,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         Log.i(TAG, "[ImageGen] Safety model missing, triggering download...")
         _safetyDownloading.value = true
         _safetyProgress.value = -1f
-        _snackbar.value = getApplication<Application>().getString(R.string.safety_model_downloading)
+        _snackbar.value = platformContext.getString("safety_model_downloading")
 
         val success = ModelDownloadWorker.awaitSafetyModelReady(
             app,
@@ -782,7 +796,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _safetyProgress.value = -1f
         if (!success) {
             Log.e(TAG, "[ImageGen] Safety model download failed or timeout")
-            _snackbar.value = getApplication<Application>().getString(R.string.safety_model_download_timeout)
+            _snackbar.value = platformContext.getString("safety_model_download_timeout")
         }
         return success
     }
@@ -793,12 +807,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val app = getApplication<Application>()
         val path = _modelPath.value.trim()
         if (path.isEmpty() || !File(path).isDirectory) {
-            _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_err_model_missing)
+            _snackbar.value = platformContext.getString("image_gen_err_model_missing")
             return@launch
         }
         val pr = _prompt.value.trim()
         if (pr.isEmpty()) {
-            _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_err_prompt_empty)
+            _snackbar.value = platformContext.getString("image_gen_err_prompt_empty")
             return@launch
         }
 
@@ -809,7 +823,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             PromptFilter.check(pr) == PromptFilter.Result.BLOCK) {
             Log.w(TAG, "[ImageGen] Prompt blocked by PromptFilter")
             _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-            _snackbar.value = getApplication<Application>().getString(R.string.imagegen_prompt_policy_violation)
+            _snackbar.value = platformContext.getString("imagegen_prompt_policy_violation")
             return@launch
         }
         // Safety model が未ダウンロードならダウンロード完了まで待つ (画像ガード有効時のみ)
@@ -828,9 +842,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val height = _heightPx.value
         val totalSteps = _steps.value
         val promptPreview = notificationPromptPreview(pr)
-        ImageGenerationNotificationManager.showSingleProgress(
-            app,
-            step = 0,
+        platformNotification.showProgress(step = 0,
             totalSteps = totalSteps,
             promptPreview = promptPreview,
             indeterminate = false
@@ -846,7 +858,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             //   markLlmActive() の際にアンロードされるのでここでは呼ばない。
             Log.i(TAG, "[ImageGen] generate() starting, acquiring LocalDream engine")
 
-            val backend = PreferencesHelper.getSdBackend(app).also { normalized ->
+            val backend = sdPreferences.getSdBackend().also { normalized ->
                 _selectedBackend.value = normalized
             }
             // Bug fix (SIGABRT during VAE createFromFile after UNet ran):
@@ -859,10 +871,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             buildLowMemoryAbortMessage(app, path, width, height)?.let { abortMessage ->
                 Log.e(TAG, "[ImageGen] aborting before generation due to low memory: $abortMessage")
                 showImageGenError(abortMessage)
-                ImageGenerationNotificationManager.showError(
-                    app,
-                    ImageGenerationNotificationManager.singleNotificationId(),
-                    getApplication<Application>().getString(R.string.imagegen_memory_too_low),
+                platformNotification.showError(platformContext.getString("imagegen_memory_too_low"),
                     abortMessage
                 )
                 return@launch
@@ -919,9 +928,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     if (prev == null || prev.step != step || prev.totalSteps != steps || prev.time != time) {
                         _progressData.value = ProgressData(step, steps, time)
                     }
-                    ImageGenerationNotificationManager.showSingleProgress(
-                        app,
-                        step = clamped,
+                    platformNotification.showProgress(step = clamped,
                         totalSteps = steps,
                         promptPreview = promptPreview
                     )
@@ -932,7 +939,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             val lastSafetyVerdict = ld.getLastSafetyVerdict()
             if (lastSafetyVerdict == SafetyResult.Verdict.BLUR) {
                 _safetyVerdict.value = SafetyResult.Verdict.BLUR
-                _snackbar.value = getApplication<Application>().getString(R.string.imagegen_safety_blurred)
+                _snackbar.value = platformContext.getString("imagegen_safety_blurred")
             }
             
             _currentStep.value = totalSteps
@@ -941,48 +948,35 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             when {
                 bmp == null && isCancelling -> {
                     wasCancelled = true
-                    _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
-                    ImageGenerationNotificationManager.showError(
-                        app,
-                        ImageGenerationNotificationManager.singleNotificationId(),
-                        getApplication<Application>().getString(R.string.imagegen_stopped_title),
-                        getApplication<Application>().getString(R.string.imagegen_cancelled_single)
+                    _snackbar.value = platformContext.getString("image_gen_snackbar_cancelled")
+                    platformNotification.showError(platformContext.getString("imagegen_stopped_title"),
+                        platformContext.getString("imagegen_cancelled_single")
                     )
                 }
                 bmp == null -> {
                     val lastVerdict = lastSafetyVerdict
                     if (lastVerdict == SafetyResult.Verdict.BLOCK) {
                         _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                        showImageGenError(getApplication<Application>().getString(R.string.imagegen_unsafe_content_blocked))
-                        ImageGenerationNotificationManager.showError(
-                            app,
-                            ImageGenerationNotificationManager.singleNotificationId(),
-                            getApplication<Application>().getString(R.string.imagegen_blocked_title),
-                            getApplication<Application>().getString(R.string.imagegen_safety_guard_body)
+                        showImageGenError(platformContext.getString("imagegen_unsafe_content_blocked"))
+                        platformNotification.showError(platformContext.getString("imagegen_blocked_title"),
+                            platformContext.getString("imagegen_safety_guard_body")
                         )
                     } else {
-                        showImageGenError(getApplication<Application>().getString(R.string.image_gen_failed))
-                        ImageGenerationNotificationManager.showError(
-                            app,
-                            ImageGenerationNotificationManager.singleNotificationId(),
-                            getApplication<Application>().getString(R.string.image_gen_failed),
+                        showImageGenError(platformContext.getString("image_gen_failed"))
+                        platformNotification.showError(platformContext.getString("image_gen_failed"),
                             promptPreview
                         )
                     }
                 }
                 else -> {
                     _resultBitmap.value = bmp
-                    val uri = MessageMediaStore.savePngBitmap(app, bmp, "imagegen_${System.currentTimeMillis()}")
+                    val uri = platformGallery.saveInternal(bmp.toPlatformImage(), "imagegen_${System.currentTimeMillis()}")
                     lastSavedInternalUri = uri
-                    ImageGenerationNotificationManager.showCompleted(
-                        app,
-                        ImageGenerationNotificationManager.singleNotificationId(),
-                        getApplication<Application>().getString(R.string.imagegen_completed_title),
+                    platformNotification.showCompleted(platformContext.getString("imagegen_completed_title"),
                         promptPreview
                     )
                     if (uri != null && metadata != null) {
-                        val prefs = app.getSharedPreferences("image_metadata", Context.MODE_PRIVATE)
-                        prefs.edit().putString("metadata_$uri", buildMetadataJson(metadata)).apply()
+                        imageMetadataStore.save(uri, buildMetadataJson(metadata))
                     }
                     // Bug fix: metadata.seed に実際に使われた seed が入るので、
                     //   -1 (ランダム) が指定されていた場合でも UI で確定値を表示できるように
@@ -997,35 +991,26 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             Log.i(TAG, "[ImageGen] generate() job was cancelled")
             wasCancelled = isCancelling
             if (isCancelling) {
-                _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
-                ImageGenerationNotificationManager.showError(
-                    app,
-                    ImageGenerationNotificationManager.singleNotificationId(),
-                    getApplication<Application>().getString(R.string.imagegen_stopped_title),
-                    getApplication<Application>().getString(R.string.imagegen_cancelled_single)
+                _snackbar.value = platformContext.getString("image_gen_snackbar_cancelled")
+                platformNotification.showError(platformContext.getString("imagegen_stopped_title"),
+                    platformContext.getString("imagegen_cancelled_single")
                 )
             }
         } catch (e: java.net.SocketException) {
             Log.e(TAG, "[ImageGen] Socket closed during generation (likely due to cancellation)", e)
             wasCancelled = isCancelling
             if (isCancelling) {
-                _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
-                ImageGenerationNotificationManager.showError(
-                    app,
-                    ImageGenerationNotificationManager.singleNotificationId(),
-                    getApplication<Application>().getString(R.string.imagegen_stopped_title),
-                    getApplication<Application>().getString(R.string.imagegen_cancelled_single)
+                _snackbar.value = platformContext.getString("image_gen_snackbar_cancelled")
+                platformNotification.showError(platformContext.getString("imagegen_stopped_title"),
+                    platformContext.getString("imagegen_cancelled_single")
                 )
             } else {
-                showImageGenError(e.message ?: getApplication<Application>().getString(R.string.imagegen_connection_lost))
+                showImageGenError(e.message ?: platformContext.getString("imagegen_connection_lost"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "ImageGen failed", e)
-            showImageGenError(e.message ?: getApplication<Application>().getString(R.string.image_gen_failed))
-            ImageGenerationNotificationManager.showError(
-                app,
-                ImageGenerationNotificationManager.singleNotificationId(),
-                getApplication<Application>().getString(R.string.image_gen_failed),
+            showImageGenError(e.message ?: platformContext.getString("image_gen_failed"))
+            platformNotification.showError(platformContext.getString("image_gen_failed"),
                 e.message ?: promptPreview
             )
         } finally {
@@ -1050,7 +1035,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 //   のリロードだけを行う（SD のリソースは次回生成時に
                 //   EngineManager のキャッシュが使い回される）。
                 //   メモリ不足時だけ SD を解放する。
-                val memInfo = com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfoSync(getApplication())
+                val memInfo = platformMemory.getSystemMemoryInfo()
                 if (memInfo != null && memInfo.availablePercent < 25) {
                     Log.i(TAG, "[ImageGen] finally: low memory (${memInfo.availablePercent}%), releasing SD")
                     runCatching { EngineManager.releaseSdKeepNone() }
@@ -1112,52 +1097,16 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun saveToGallery(context: Context) = viewModelScope.launch(Dispatchers.IO) {
-        val bmp = _resultBitmap.value ?: return@launch
-        val name = "nezumi_sd_${System.currentTimeMillis()}.png"
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/NezumiAI")
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        put(MediaStore.Images.Media.IS_PENDING, 1)
-                    }
-                }
-                val resolver = context.contentResolver
-                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                    ?: return@launch
-                resolver.openOutputStream(uri)?.use { out ->
-                    bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(uri, values, null, null)
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                val uri = MediaStore.Images.Media.insertImage(
-                    context.contentResolver,
-                    bmp,
-                    name,
-                    "nezumi-ai SD"
-                )
-                if (uri == null) {
-                    _snackbar.value = getApplication<Application>().getString(R.string.save_failed)
-                    return@launch
-                }
-            }
-            _snackbar.value = getApplication<Application>().getString(R.string.save_success)
-        } catch (e: Exception) {
-            Log.e(TAG, "saveToGallery", e)
-            _snackbar.value = e.message ?: "save failed"
-        }
+        val img = resultImage.value ?: return@launch
+        val ok = platformGallery.saveToGallery(img, "nezumi_sd_${System.currentTimeMillis()}")
+        _snackbar.value = platformContext.getString(if (ok) "save_success" else "save_failed")
     }
 
     fun share(context: Context) {
-        val bmp = _resultBitmap.value ?: return
-        shareBitmap(context, bmp)
+        val img = resultImage.value ?: return
+        viewModelScope.launch {
+            platformGallery.share(img, platformContext.getString("share_dialog_title"))
+        }
     }
 
     fun saveBitmapToGallery(context: Context, bmp: Bitmap) = viewModelScope.launch(Dispatchers.IO) {
@@ -1192,11 +1141,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     "nezumi-ai SD"
                 )
                 if (uri == null) {
-                    _snackbar.value = getApplication<Application>().getString(R.string.save_failed)
+                    _snackbar.value = platformContext.getString("save_failed")
                     return@launch
                 }
             }
-            _snackbar.value = getApplication<Application>().getString(R.string.save_success)
+            _snackbar.value = platformContext.getString("save_success")
         } catch (e: Exception) {
             Log.e(TAG, "saveBitmapToGallery", e)
             _snackbar.value = e.message ?: "save failed"
@@ -1214,7 +1163,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             withContext(Dispatchers.Main) {
-                context.startActivity(Intent.createChooser(share, context.getString(R.string.share_dialog_title)))
+                context.startActivity(Intent.createChooser(share, platformContext.getString("share_dialog_title")))
             }
         }
     }
@@ -1232,7 +1181,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val baseScheduler = _scheduler.value.id
 
         if (basePrompt.isEmpty()) {
-            _snackbar.value = getApplication<Application>().getString(R.string.imagegen_prompt_empty)
+            _snackbar.value = platformContext.getString("imagegen_prompt_empty")
             return false
         }
 
@@ -1254,7 +1203,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
 
         _generationQueue.value = GenerationQueue(items = queueItems, currentIndex = 0, isRunning = false)
-        _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_added, validCount)
+        _snackbar.value = platformContext.getString("imagegen_queue_added", validCount)
         Log.d(TAG, "[Queue] Created queue with $validCount items")
         return true
     }
@@ -1265,12 +1214,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     fun startQueueGeneration() {
         val queue = _generationQueue.value
         if (queue.items.isEmpty()) {
-            _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_empty)
+            _snackbar.value = platformContext.getString("imagegen_queue_empty")
             return
         }
 
         if (_isQueueRunning.value) {
-            _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_running)
+            _snackbar.value = platformContext.getString("imagegen_queue_running")
             return
         }
 
@@ -1289,12 +1238,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 !ensureSafetyModelReady(app)) {
                 _isQueueRunning.value = false
                 _loading.value = false
-                _snackbar.value = getApplication<Application>().getString(R.string.imagegen_safety_model_dl_failed)
-                ImageGenerationNotificationManager.showError(
-                    app,
-                    ImageGenerationNotificationManager.queueNotificationId(),
-                    getApplication<Application>().getString(R.string.imagegen_queue_failed_title),
-                    getApplication<Application>().getString(R.string.imagegen_safety_prep_failed)
+                _snackbar.value = platformContext.getString("imagegen_safety_model_dl_failed")
+                platformNotification.showQueueError(platformContext.getString("imagegen_queue_failed_title"),
+                    platformContext.getString("imagegen_safety_prep_failed")
                 )
                 releaseGenerationWakeLock()
                 return@launch
@@ -1303,9 +1249,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             val totalItems = queue.items.size
             val queuePromptPreview = notificationPromptPreview(queue.items.firstOrNull()?.prompt.orEmpty())
             _queueProgress.value = Pair(0, totalItems)
-            ImageGenerationNotificationManager.showQueueProgress(
-                app,
-                itemIndex = 1,
+            platformNotification.showQueueProgress(itemIndex = 1,
                 totalItems = totalItems,
                 step = 0,
                 totalSteps = queue.items.firstOrNull()?.steps ?: 1,
@@ -1319,7 +1263,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             for (idx in currentQueue.items.indices) {
                 if (!isActive) {
                     Log.i(TAG, "[Queue] Cancelled")
-                    _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_cancelled)
+                    _snackbar.value = platformContext.getString("imagegen_queue_cancelled")
                     break
                 }
 
@@ -1362,7 +1306,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                         items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
                             if (itemIndex == idx) queueItem.copy(
                                 status = GenerationQueueItem.GenerationStatus.BLOCKED,
-                                errorMessage = getApplication<Application>().getString(R.string.imagegen_safety_guard_restricted)
+                                errorMessage = platformContext.getString("imagegen_safety_guard_restricted")
                             )
                             else queueItem
                         }
@@ -1399,14 +1343,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             // キューの完了通知。BLOCKED は失敗ではないので、保存した枚数と一緒に内訳を提示する。
             val blockedCount = _generationQueue.value.blockedCount
             val summary = buildString {
-                append(getApplication<Application>().getString(R.string.imagegen_queue_progress, completedCount, totalItems))
-                if (blockedCount > 0) append(getApplication<Application>().getString(R.string.imagegen_queue_blocked_suffix, blockedCount))
-                if (failedCount > 0) append(getApplication<Application>().getString(R.string.imagegen_queue_failed_suffix, failedCount))
+                append(platformContext.getString("imagegen_queue_progress", completedCount, totalItems))
+                if (blockedCount > 0) append(platformContext.getString("imagegen_queue_blocked_suffix", blockedCount))
+                if (failedCount > 0) append(platformContext.getString("imagegen_queue_failed_suffix", failedCount))
             }
-            ImageGenerationNotificationManager.showCompleted(
-                app,
-                ImageGenerationNotificationManager.queueNotificationId(),
-                getApplication<Application>().getString(R.string.imagegen_queue_completed),
+            platformNotification.showQueueCompleted(platformContext.getString("imagegen_queue_completed"),
                 summary
             )
             _isQueueRunning.value = false
@@ -1427,13 +1368,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
             if (path.isEmpty() || !File(path).isDirectory) {
                 Log.e(TAG, "[QueueItem] Invalid model path")
-                showImageGenError(app.getString(com.nezumi_ai.R.string.image_gen_err_model_missing))
+                showImageGenError(platformContext.getString("image_gen_err_model_missing"))
                 return@withContext null
             }
 
             if (!ensureSafetyModelReady(app)) {
                 Log.e(TAG, "[QueueItem] Safety model not ready")
-                showImageGenError(getApplication<Application>().getString(R.string.imagegen_safety_prep_failed))
+                showImageGenError(platformContext.getString("imagegen_safety_prep_failed"))
                 return@withContext null
             }
 
@@ -1442,7 +1383,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 PromptFilter.check(item.prompt) == PromptFilter.Result.BLOCK) {
                 Log.w(TAG, "[QueueItem] Prompt blocked by PromptFilter")
                 _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                showImageGenError(getApplication<Application>().getString(R.string.imagegen_prompt_policy_violation))
+                showImageGenError(platformContext.getString("imagegen_prompt_policy_violation"))
                 return@withContext null
             }
 
@@ -1503,9 +1444,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     if (prev == null || prev.step != step || prev.totalSteps != totalSteps) {
                         _progressData.value = ProgressData(step, totalSteps, 0f)
                     }
-                    ImageGenerationNotificationManager.showQueueProgress(
-                        app,
-                        itemIndex = itemIndex,
+                    platformNotification.showQueueProgress(itemIndex = itemIndex,
                         totalItems = totalItems,
                         step = clamped,
                         totalSteps = totalSteps,
@@ -1540,7 +1479,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     // セーフティ違反（後段ガード）
                     Log.w(TAG, "[QueueItem] Image blocked by safety guard")
                     _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                    showImageGenError(getApplication<Application>().getString(R.string.imagegen_unsafe_content_blocked))
+                    showImageGenError(platformContext.getString("imagegen_unsafe_content_blocked"))
                     return@withContext null
                 }
             } else {
@@ -1549,10 +1488,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 if (lastVerdict == SafetyResult.Verdict.BLOCK) {
                     Log.w(TAG, "[QueueItem] Image BLOCK by safety guard (verdict=${lastVerdict})")
                     _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                    showImageGenError(getApplication<Application>().getString(R.string.imagegen_unsafe_content_blocked))
+                    showImageGenError(platformContext.getString("imagegen_unsafe_content_blocked"))
                 } else {
                     Log.w(TAG, "[QueueItem] Generation failed or safety check unavailable")
-                    showImageGenError(getApplication<Application>().getString(R.string.image_gen_failed))
+                    showImageGenError(platformContext.getString("image_gen_failed"))
                 }
                 return@withContext null
             }
@@ -1561,11 +1500,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             throw e
         } catch (e: java.net.SocketException) {
             Log.e(TAG, "[QueueItem] Socket closed during generation (likely due to cancellation)", e)
-            showImageGenError(e.message ?: getApplication<Application>().getString(R.string.imagegen_connection_lost))
+            showImageGenError(e.message ?: platformContext.getString("imagegen_connection_lost"))
             null
         } catch (e: Exception) {
             Log.e(TAG, "[QueueItem] Error", e)
-            showImageGenError(e.message ?: getApplication<Application>().getString(R.string.image_gen_failed))
+            showImageGenError(e.message ?: platformContext.getString("image_gen_failed"))
             null
         }
     }
@@ -1626,9 +1565,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _generationQueue.value = GenerationQueue()
         _queueProgress.value = null
         _isQueueRunning.value = false
-        ImageGenerationNotificationManager.cancelQueue(getApplication())
+        platformNotification.cancelQueue())
         releaseGenerationWakeLock()
-        _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_cleared)
+        _snackbar.value = platformContext.getString("imagegen_queue_cleared")
     }
 
     /**
@@ -1641,14 +1580,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
         queueRunJob?.cancel()
         _isQueueRunning.value = false
-        ImageGenerationNotificationManager.showError(
-            getApplication(),
-            ImageGenerationNotificationManager.queueNotificationId(),
-            getApplication<Application>().getString(R.string.imagegen_queue_stopped_title),
-            getApplication<Application>().getString(R.string.imagegen_queue_run_cancelled)
+        platformNotification.showQueueError(
+            platformContext.getString("imagegen_queue_stopped_title"),
+            platformContext.getString("imagegen_queue_run_cancelled")
         )
         releaseGenerationWakeLock()
-        _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_run_cancelled)
+        _snackbar.value = platformContext.getString("imagegen_queue_run_cancelled")
     }
 
     // ============ メタデータ永続化 ============
