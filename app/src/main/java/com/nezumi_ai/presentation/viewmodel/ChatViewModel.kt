@@ -3021,7 +3021,7 @@ class ChatViewModel(
         }
 
         // 画像をコンテキストに含むための デバッグログ
-        val messagesWithImagesForLog = messages.filter { it.imageUri != null && it.imageUri.isNotEmpty() }
+        val messagesWithImagesForLog = messages.filter { !it.imageUri.isNullOrEmpty() }
         if (messagesWithImagesForLog.isNotEmpty()) {
             Log.d(TAG, "PROMPT_BUILD: Found ${messagesWithImagesForLog.size} messages with images: ${messagesWithImagesForLog.map { "${it.id}:${it.role}" }}")
         }
@@ -3041,7 +3041,7 @@ class ChatViewModel(
         )
 
         // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
-        val messagesWithThinking = messages.filter { it.thinkingContent != null && it.thinkingContent.isNotEmpty() }
+        val messagesWithThinking = messages.filter { !it.thinkingContent.isNullOrEmpty() }
         if (messagesWithThinking.isNotEmpty()) {
             Log.d(TAG, "PROMPT_BUILD: Messages with thinkingContent found (count=${messagesWithThinking.size}), but they are excluded from prompt as designed")
         }
@@ -3485,8 +3485,9 @@ class ChatViewModel(
         } else {
             countedMessages.sumOf { message ->
                 var tokens = 0
-                if (!message.imageUri.isNullOrBlank()) {
-                    tokens += message.imageUri.split(',').count { it.isNotBlank() } * 256
+                val imageUri = message.imageUri
+                if (!imageUri.isNullOrBlank()) {
+                    tokens += imageUri.split(',').count { it.isNotBlank() } * 256
                 }
                 if (!message.audioUri.isNullOrBlank()) tokens += 150
                 tokens
@@ -3810,8 +3811,7 @@ class ChatViewModel(
 
         // Phase 13: 整合性チェック - imageUri がないのに imageDescription がある場合を検出
         val orphanedDescriptions = messages.filter {
-            it.imageDescription != null &&
-            it.imageDescription.isNotEmpty() &&
+            !it.imageDescription.isNullOrEmpty() &&
             (it.imageUri.isNullOrEmpty())
         }
         if (orphanedDescriptions.isNotEmpty()) {
@@ -3931,8 +3931,7 @@ class ChatViewModel(
 
             // 整合性チェック：imageUri がないのに imageDescription がある場合を検出
             val ghostDescriptions = messages.filter {
-                it.imageDescription != null &&
-                it.imageDescription.isNotEmpty() &&
+                !it.imageDescription.isNullOrEmpty() &&
                 (it.imageUri.isNullOrEmpty())
             }
             if (ghostDescriptions.isNotEmpty()) {

@@ -1,0 +1,965 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 37,
+    "identityHash": "210e40a7797eaac4f7bcf54461f2ee77",
+    "entities": [
+      {
+        "tableName": "chat_chunk",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `message_id` INTEGER NOT NULL, `session_id` INTEGER NOT NULL, `chunk_text` TEXT NOT NULL, `embedding` BLOB NOT NULL, `norm` REAL NOT NULL, `created_at` INTEGER NOT NULL, FOREIGN KEY(`message_id`) REFERENCES `message`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "message_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chunkText",
+            "columnName": "chunk_text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "embedding",
+            "columnName": "embedding",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "norm",
+            "columnName": "norm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_chat_chunk_message_id",
+            "unique": false,
+            "columnNames": [
+              "message_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chat_chunk_message_id` ON `${TABLE_NAME}` (`message_id`)"
+          },
+          {
+            "name": "index_chat_chunk_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chat_chunk_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "message",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "message_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "chat_session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `createDate` INTEGER NOT NULL, `lastUpdated` INTEGER NOT NULL, `selectedModel` TEXT NOT NULL, `isIncognito` INTEGER NOT NULL, `isPinned` INTEGER NOT NULL, `lastKnownContextTokens` INTEGER NOT NULL, `lastKnownMediaTokens` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createDate",
+            "columnName": "createDate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastUpdated",
+            "columnName": "lastUpdated",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "selectedModel",
+            "columnName": "selectedModel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isIncognito",
+            "columnName": "isIncognito",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isPinned",
+            "columnName": "isPinned",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastKnownContextTokens",
+            "columnName": "lastKnownContextTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastKnownMediaTokens",
+            "columnName": "lastKnownMediaTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "message",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `role` TEXT NOT NULL, `content` TEXT NOT NULL, `thinkingContent` TEXT, `imageUri` TEXT, `imageDescription` TEXT, `audioUri` TEXT, `timestamp` INTEGER NOT NULL, `isStreaming` INTEGER NOT NULL, `toolResultsJson` TEXT, `generationTps` REAL, `generationTimeMs` INTEGER, `ttftMs` INTEGER, `parentUserMessageId` INTEGER, `variantIndex` INTEGER NOT NULL, FOREIGN KEY(`sessionId`) REFERENCES `chat_session`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thinkingContent",
+            "columnName": "thinkingContent",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "imageUri",
+            "columnName": "imageUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "imageDescription",
+            "columnName": "imageDescription",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "audioUri",
+            "columnName": "audioUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isStreaming",
+            "columnName": "isStreaming",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toolResultsJson",
+            "columnName": "toolResultsJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "generationTps",
+            "columnName": "generationTps",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "generationTimeMs",
+            "columnName": "generationTimeMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "ttftMs",
+            "columnName": "ttftMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "parentUserMessageId",
+            "columnName": "parentUserMessageId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "variantIndex",
+            "columnName": "variantIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_message_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_message_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chat_session",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "settings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `selectedModel` TEXT NOT NULL, `backendType` TEXT NOT NULL, `autoFallback` INTEGER NOT NULL, `contextWindow` INTEGER NOT NULL, `contextWindowMap` TEXT NOT NULL, `preloadMemoryWarningThresholdPercent` INTEGER NOT NULL, `temperature` REAL NOT NULL, `topP` REAL NOT NULL, `maxTopK` INTEGER NOT NULL, `maxTokens` INTEGER NOT NULL, `cloudMaxTokens` INTEGER NOT NULL, `resourceMonitorEnabled` INTEGER NOT NULL, `gemmaThinkingEnabled` INTEGER NOT NULL, `speculativeDecodingEnabled` INTEGER NOT NULL, `systemPrompt` TEXT NOT NULL, `userName` TEXT NOT NULL, `lastModified` INTEGER NOT NULL, `llamaCppThreads` INTEGER NOT NULL, `llamaCppGpuLayers` INTEGER NOT NULL, `llamaCppGpuBackend` TEXT NOT NULL, `llamaCppBatchSize` INTEGER NOT NULL, `llamaCppUBatchSize` INTEGER NOT NULL, `llamaCppKvUnified` INTEGER NOT NULL, `llamaCppNKeep` INTEGER NOT NULL, `llamaCppRopeFreqBase` REAL NOT NULL, `llamaCppRopeFreqScale` REAL NOT NULL, `memorySaveMode` TEXT NOT NULL, `stopTokensMap` TEXT NOT NULL, `currentSessionId` INTEGER NOT NULL, `chatHistoryLimit` INTEGER NOT NULL, `mtpEnabled` INTEGER NOT NULL, `mtpDraftTokens` INTEGER NOT NULL, `flashAttentionEnabled` INTEGER NOT NULL, `dynamicBatchSizeEnabled` INTEGER NOT NULL, `promptBatchSize` INTEGER NOT NULL, `generationBatchSize` INTEGER NOT NULL, `kvCacheOptimizationEnabled` INTEGER NOT NULL, `contextShiftEnabled` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "selectedModel",
+            "columnName": "selectedModel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backendType",
+            "columnName": "backendType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoFallback",
+            "columnName": "autoFallback",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contextWindow",
+            "columnName": "contextWindow",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contextWindowMap",
+            "columnName": "contextWindowMap",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "preloadMemoryWarningThresholdPercent",
+            "columnName": "preloadMemoryWarningThresholdPercent",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "temperature",
+            "columnName": "temperature",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "topP",
+            "columnName": "topP",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxTopK",
+            "columnName": "maxTopK",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxTokens",
+            "columnName": "maxTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cloudMaxTokens",
+            "columnName": "cloudMaxTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "resourceMonitorEnabled",
+            "columnName": "resourceMonitorEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gemmaThinkingEnabled",
+            "columnName": "gemmaThinkingEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "speculativeDecodingEnabled",
+            "columnName": "speculativeDecodingEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "systemPrompt",
+            "columnName": "systemPrompt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userName",
+            "columnName": "userName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastModified",
+            "columnName": "lastModified",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppThreads",
+            "columnName": "llamaCppThreads",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppGpuLayers",
+            "columnName": "llamaCppGpuLayers",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppGpuBackend",
+            "columnName": "llamaCppGpuBackend",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppBatchSize",
+            "columnName": "llamaCppBatchSize",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppUBatchSize",
+            "columnName": "llamaCppUBatchSize",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppKvUnified",
+            "columnName": "llamaCppKvUnified",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppNKeep",
+            "columnName": "llamaCppNKeep",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppRopeFreqBase",
+            "columnName": "llamaCppRopeFreqBase",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llamaCppRopeFreqScale",
+            "columnName": "llamaCppRopeFreqScale",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memorySaveMode",
+            "columnName": "memorySaveMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stopTokensMap",
+            "columnName": "stopTokensMap",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentSessionId",
+            "columnName": "currentSessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatHistoryLimit",
+            "columnName": "chatHistoryLimit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mtpEnabled",
+            "columnName": "mtpEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mtpDraftTokens",
+            "columnName": "mtpDraftTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashAttentionEnabled",
+            "columnName": "flashAttentionEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dynamicBatchSizeEnabled",
+            "columnName": "dynamicBatchSizeEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "promptBatchSize",
+            "columnName": "promptBatchSize",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generationBatchSize",
+            "columnName": "generationBatchSize",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kvCacheOptimizationEnabled",
+            "columnName": "kvCacheOptimizationEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contextShiftEnabled",
+            "columnName": "contextShiftEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "alarm",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `description` TEXT, `triggerTime` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `hour` INTEGER NOT NULL, `minute` INTEGER NOT NULL, `label` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "triggerTime",
+            "columnName": "triggerTime",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isEnabled",
+            "columnName": "isEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hour",
+            "columnName": "hour",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "minute",
+            "columnName": "minute",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "preset",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `icon` TEXT NOT NULL, `system_prompt` TEXT NOT NULL, `model_id` TEXT NOT NULL, `enabled_tools` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, `is_default` INTEGER NOT NULL, `memory_enabled` INTEGER NOT NULL, `description` TEXT NOT NULL, `is_locked` INTEGER NOT NULL, `tool_calling_enabled` INTEGER NOT NULL, `sort_order` INTEGER NOT NULL, `tags_csv` TEXT NOT NULL, `mcp_server_ids` TEXT NOT NULL, `skills_enabled` INTEGER NOT NULL, `hidden_skill_names` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icon",
+            "columnName": "icon",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "systemPrompt",
+            "columnName": "system_prompt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modelId",
+            "columnName": "model_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabledTools",
+            "columnName": "enabled_tools",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isDefault",
+            "columnName": "is_default",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memoryEnabled",
+            "columnName": "memory_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isLocked",
+            "columnName": "is_locked",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toolCallingEnabled",
+            "columnName": "tool_calling_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sort_order",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tagsCsv",
+            "columnName": "tags_csv",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mcpServerIds",
+            "columnName": "mcp_server_ids",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "skillsEnabled",
+            "columnName": "skills_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hiddenSkillNames",
+            "columnName": "hidden_skill_names",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "memory",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `content` TEXT NOT NULL, `embedding` BLOB NOT NULL, `norm` REAL NOT NULL, `importance` REAL NOT NULL, `access_count` INTEGER NOT NULL, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, `last_accessed_at` INTEGER NOT NULL, `is_deleted` INTEGER NOT NULL, `source` TEXT NOT NULL, `session_id` TEXT NOT NULL, `rga_uid` TEXT NOT NULL, `rga_prev_uid` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "embedding",
+            "columnName": "embedding",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "norm",
+            "columnName": "norm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importance",
+            "columnName": "importance",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accessCount",
+            "columnName": "access_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAccessedAt",
+            "columnName": "last_accessed_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isDeleted",
+            "columnName": "is_deleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rgaUid",
+            "columnName": "rga_uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rgaPrevUid",
+            "columnName": "rga_prev_uid",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_is_deleted",
+            "unique": false,
+            "columnNames": [
+              "is_deleted"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_is_deleted` ON `${TABLE_NAME}` (`is_deleted`)"
+          },
+          {
+            "name": "index_memory_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "memory_session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `last_extracted_turn` INTEGER NOT NULL, `pending_extraction` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastExtractedTurn",
+            "columnName": "last_extracted_turn",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pendingExtraction",
+            "columnName": "pending_extraction",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "tool_call_history",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `sessionId` INTEGER NOT NULL, `sessionName` TEXT, `toolName` TEXT NOT NULL, `query` TEXT, `success` INTEGER NOT NULL, `resultSummary` TEXT, `messageId` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionName",
+            "columnName": "sessionName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "toolName",
+            "columnName": "toolName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "query",
+            "columnName": "query",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "success",
+            "columnName": "success",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "resultSummary",
+            "columnName": "resultSummary",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_tool_call_history_timestamp",
+            "unique": false,
+            "columnNames": [
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_tool_call_history_timestamp` ON `${TABLE_NAME}` (`timestamp`)"
+          },
+          {
+            "name": "index_tool_call_history_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_tool_call_history_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_tool_call_history_toolName",
+            "unique": false,
+            "columnNames": [
+              "toolName"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_tool_call_history_toolName` ON `${TABLE_NAME}` (`toolName`)"
+          },
+          {
+            "name": "index_tool_call_history_query",
+            "unique": false,
+            "columnNames": [
+              "query"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_tool_call_history_query` ON `${TABLE_NAME}` (`query`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '210e40a7797eaac4f7bcf54461f2ee77')"
+    ]
+  }
+}

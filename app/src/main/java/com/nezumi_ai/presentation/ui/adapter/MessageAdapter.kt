@@ -119,8 +119,9 @@ class MessageAdapter(
             contentWithoutLimit,
             preserveToolCallTags = true
         )
-        val persistedToolCards = if (!message.toolResultsJson.isNullOrBlank()) {
-            ToolResultCard.listFromJsonArray(message.toolResultsJson)
+        val toolResultsJson = message.toolResultsJson
+        val persistedToolCards = if (!toolResultsJson.isNullOrBlank()) {
+            ToolResultCard.listFromJsonArray(toolResultsJson)
         } else {
             emptyList()
         }

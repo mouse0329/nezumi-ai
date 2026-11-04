@@ -1,14 +1,17 @@
 package com.nezumi_ai.data.database.entity
 
+import com.nezumi_ai.data.database.currentTimeMillis
+
+import com.nezumi_ai.data.database.randomUuidString
+
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import java.util.UUID
 
 @Entity(tableName = "preset")
 data class PresetEntity(
     @PrimaryKey
-    val id: String = UUID.randomUUID().toString(),
+    val id: String = randomUuidString(),
     val name: String,
     val icon: String,
     @ColumnInfo(name = "system_prompt")
@@ -18,9 +21,9 @@ data class PresetEntity(
     @ColumnInfo(name = "enabled_tools")
     val enabledTools: String = "[]",
     @ColumnInfo(name = "created_at")
-    val createdAt: Long = System.currentTimeMillis(),
+    val createdAt: Long = currentTimeMillis(),
     @ColumnInfo(name = "updated_at")
-    val updatedAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = currentTimeMillis(),
     @ColumnInfo(name = "is_default")
     val isDefault: Boolean = false,
     @ColumnInfo(name = "memory_enabled")

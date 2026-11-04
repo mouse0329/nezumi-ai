@@ -8,6 +8,12 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.kotlin.multiplatform.library)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.androidx.room)
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 kotlin {
@@ -35,6 +41,9 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
+            // Room (KMP)。エンティティ・DAO を共有する。DB 本体のビルダーはプラットフォーム別に実装する。
+            implementation(libs.androidx.room.runtime)
+            implementation(libs.androidx.sqlite.bundled)
             // クラウド推論エンジン層の KMP 化 (フェーズ1) で使う共通依存。
             // OkHttp 直叩きから Ktor Client へ置き換えるためのコア。
             implementation(libs.ktor.client.core)
@@ -56,4 +65,11 @@ kotlin {
             implementation(libs.ktor.client.darwin)
         }
     }
+}
+
+// KMP の各ターゲットの configuration は kotlin {} でターゲットを宣言した後に存在するため、必ず後ろに置く
+dependencies {
+    add("kspAndroid", libs.androidx.room.compiler)
+    add("kspIosArm64", libs.androidx.room.compiler)
+    add("kspIosSimulatorArm64", libs.androidx.room.compiler)
 }

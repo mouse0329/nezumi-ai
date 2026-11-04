@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.database.dao
 
+import com.nezumi_ai.data.database.currentTimeMillis
+
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -26,13 +28,13 @@ interface MemoryDao {
     suspend fun getById(id: Long): MemoryEntity?
 
     @Query("UPDATE memory SET access_count = access_count + 1, last_accessed_at = :accessedAt WHERE id IN (:ids)")
-    suspend fun markAccessed(ids: List<Long>, accessedAt: Long = System.currentTimeMillis())
+    suspend fun markAccessed(ids: List<Long>, accessedAt: Long = currentTimeMillis())
 
     @Query("UPDATE memory SET is_deleted = 1, updated_at = :updatedAt WHERE id = :id")
-    suspend fun softDelete(id: Long, updatedAt: Long = System.currentTimeMillis())
+    suspend fun softDelete(id: Long, updatedAt: Long = currentTimeMillis())
 
     @Query("UPDATE memory SET is_deleted = 1, updated_at = :updatedAt WHERE is_deleted = 0")
-    suspend fun softDeleteAll(updatedAt: Long = System.currentTimeMillis())
+    suspend fun softDeleteAll(updatedAt: Long = currentTimeMillis())
 
     @Query("SELECT COUNT(*) FROM memory WHERE is_deleted = 0")
     suspend fun countActive(): Int
@@ -47,5 +49,5 @@ interface MemoryDao {
     suspend fun getLowScoreIds(limit: Int): List<Long>
 
     @Query("UPDATE memory SET is_deleted = 1, updated_at = :updatedAt WHERE id IN (:ids)")
-    suspend fun softDeleteByIds(ids: List<Long>, updatedAt: Long = System.currentTimeMillis())
+    suspend fun softDeleteByIds(ids: List<Long>, updatedAt: Long = currentTimeMillis())
 }

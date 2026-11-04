@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.database.entity
 
+import com.nezumi_ai.data.database.currentTimeMillis
+
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -11,7 +13,7 @@ data class AlarmEntity(
     val description: String? = null,
     val triggerTime: Long, // Unix timestamp in milliseconds
     val isEnabled: Boolean = true,
-    val createdAt: Long = System.currentTimeMillis(),
+    val createdAt: Long = currentTimeMillis(),
     val hour: Int = 0,
     val minute: Int = 0,
     val label: String = ""

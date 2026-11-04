@@ -175,8 +175,9 @@ object SessionExportWriter {
                 }
         }
 
-        if (!m.audioUri.isNullOrBlank()) {
-            out.put(encodeUriAttachment(context, m.audioUri, "audio", null))
+        val audioUri = m.audioUri
+        if (!audioUri.isNullOrBlank()) {
+            out.put(encodeUriAttachment(context, audioUri, "audio", null))
         }
     }
 

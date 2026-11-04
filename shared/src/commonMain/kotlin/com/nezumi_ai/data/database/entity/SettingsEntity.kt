@@ -1,5 +1,8 @@
 package com.nezumi_ai.data.database.entity
 
+import com.nezumi_ai.data.database.currentTimeMillis
+import com.nezumi_ai.data.database.availableProcessorCount
+
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import kotlin.math.roundToInt
@@ -26,9 +29,9 @@ data class SettingsEntity(
     val speculativeDecodingEnabled: Boolean = false,
     val systemPrompt: String = "",
     val userName: String = "",
-    val lastModified: Long = System.currentTimeMillis(),
+    val lastModified: Long = currentTimeMillis(),
     // llama.cpp settings
-    val llamaCppThreads: Int = (Runtime.getRuntime().availableProcessors() * 0.7f)
+    val llamaCppThreads: Int = (availableProcessorCount() * 0.7f)
         .roundToInt()
         .coerceAtLeast(1),
     val llamaCppGpuLayers: Int = 0,

@@ -1,5 +1,9 @@
 package com.nezumi_ai.data.database.entity
 
+import com.nezumi_ai.data.database.currentTimeMillis
+
+import com.nezumi_ai.data.database.randomUuidString
+
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
@@ -22,18 +26,18 @@ data class MemoryEntity(
     @ColumnInfo(name = "access_count")
     val accessCount: Int = 0,
     @ColumnInfo(name = "created_at")
-    val createdAt: Long = System.currentTimeMillis(),
+    val createdAt: Long = currentTimeMillis(),
     @ColumnInfo(name = "updated_at")
-    val updatedAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = currentTimeMillis(),
     @ColumnInfo(name = "last_accessed_at")
-    val lastAccessedAt: Long = System.currentTimeMillis(),
+    val lastAccessedAt: Long = currentTimeMillis(),
     @ColumnInfo(name = "is_deleted")
     val isDeleted: Boolean = false,
     val source: String = SOURCE_EXTRACTED,
     @ColumnInfo(name = "session_id")
     val sessionId: String = "",
     @ColumnInfo(name = "rga_uid")
-    val rgaUid: String = java.util.UUID.randomUUID().toString(),
+    val rgaUid: String = randomUuidString(),
     @ColumnInfo(name = "rga_prev_uid")
     val rgaPrevUid: String? = null
 ) {

@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.database.entity
 
+import com.nezumi_ai.data.database.currentTimeMillis
+
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -33,5 +35,5 @@ data class ChatChunkEntity(
     val embedding: ByteArray,
     val norm: Float,
     @ColumnInfo(name = "created_at")
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = currentTimeMillis()
 )
