@@ -36,7 +36,7 @@ import com.nezumi_ai.data.database.entity.ToolCallHistoryEntity
         ToolCallHistoryEntity::class
     ],
     version = 37,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
     
