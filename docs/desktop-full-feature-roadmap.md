@@ -104,7 +104,18 @@ Android UIの構造と操作感は維持し、Android専用APIに結合した部
 - `iosArm64` / `iosSimulatorArm64` target
 - commonMainへ移行済みのドメイン・パーサ・プロトコル
 - Compose Multiplatform依存
-- commonMainへ移設済みの共通UI部品（この更新時点でコンパイル未検証）
+- commonMainへ移設済みの共通UI部品（Desktop/Androidコンパイル確認済み）
+- チャットヘッダーをresource-neutralな`SharedChatHeader`としてcommonMainへ移設済み
+- 共通メッセージ一覧・入力欄をcommonMainへ移設し、Desktopシェルで利用開始
+- ヘッダー・一覧・入力欄を統合した`SharedChatScreen`を追加
+- Android `MessageEntity`を共通表示モデルへ変換するマッパーを追加
+- 共通チャット状態にユーザー送信・AIストリーミング開始/追記/完了の遷移を追加
+- 共通チャットイベントReducerとDesktop JVMテストを追加
+- `InferenceStreamProtocol`の制御マーカーを共通チャットイベントへ変換するAdapterを追加
+- 思考内容、実行中ツール、生成速度、エラーを共通チャット状態へ保持
+- 共通チャット画面へThinking・Tool・TPS・エラー状態を表示
+- チャット状態表示を`ChatStatusPanel`へ分離
+- セッションサマリーモデルと共通セッション一覧Composableを追加
 - SwiftUIの最小iOSシェル
 
 ### まだ必要なもの
@@ -259,6 +270,13 @@ AppShell
 8. `SessionListScreen`
 9. `HistorySearchModal`
 10. `ChatScreen`
+
+現在の進捗: 1〜4は移設済み。`ChatHeader`、メッセージ一覧、共通入力欄、
+`SharedChatScreen`を移設済み。Desktopシェルで共通画面を利用している。ストリーミング中メッセージの表示状態も
+共通モデルで表現でき、送信・ストリーミング・失敗復旧を共通テストで検証している。
+Android固有の
+`RecyclerView`、`AndroidView`、入力IME処理を含む既存画面本体は、Platform
+コールバックへ分離してから置き換える。
 
 ### 6.3 リソース方針
 

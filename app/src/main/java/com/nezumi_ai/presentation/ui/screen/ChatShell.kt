@@ -1,13 +1,11 @@
 package com.nezumi_ai.presentation.ui.screen
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -27,19 +25,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.nezumi_ai.R
+import com.nezumi_ai.presentation.ui.screen.SharedChatHeader
 import com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText
 
 /**
@@ -57,68 +51,24 @@ fun ChatHeader(
     modifier: Modifier = Modifier,
     actions: @Composable () -> Unit = {}
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(headerColor)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // bg_back_button.xml (primary_light + border の円) 相当
-        IconButton(
-            onClick = onBackClick,
-            modifier = Modifier
-                .requiredSize(36.dp)
-                .background(colorResource(R.color.primary_light), CircleShape)
-                .border(1.dp, colorResource(R.color.border), CircleShape)
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_menu),
-                contentDescription = stringResource(R.string.open_sidebar),
-                tint = colorResource(R.color.text_primary),
-                modifier = Modifier.size(20.dp)
-            )
-        }
-        Image(
-            painter = painterResource(R.drawable.ic_nezumi_ai),
-            contentDescription = stringResource(R.string.app_name),
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .padding(start = 8.dp, end = 8.dp)
-                .size(28.dp)
-        )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 10.dp)
-                .clickable(onClick = onTitleClick)
-        ) {
-            Text(
-                text = title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = colorResource(R.color.text_primary),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.semantics {
-                    if (titleContentDescription != null) {
-                        contentDescription = titleContentDescription
-                    }
-                }
-            )
-            Text(
-                text = modelName,
-                fontSize = 13.sp,
-                color = colorResource(R.color.text_secondary),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-        Box(modifier = Modifier.padding(start = 8.dp)) {
-            actions()
-        }
-    }
+    SharedChatHeader(
+        title = title,
+        titleContentDescription = titleContentDescription,
+        modelName = modelName,
+        headerColor = headerColor,
+        backButtonColor = colorResource(R.color.primary_light),
+        borderColor = colorResource(R.color.border),
+        textColor = colorResource(R.color.text_primary),
+        secondaryTextColor = colorResource(R.color.text_secondary),
+        menuIcon = painterResource(R.drawable.ic_menu),
+        logo = painterResource(R.drawable.ic_nezumi_ai),
+        menuContentDescription = stringResource(R.string.open_sidebar),
+        logoContentDescription = stringResource(R.string.app_name),
+        onBackClick = onBackClick,
+        onTitleClick = onTitleClick,
+        modifier = modifier,
+        actions = actions
+    )
 }
 
 /**
