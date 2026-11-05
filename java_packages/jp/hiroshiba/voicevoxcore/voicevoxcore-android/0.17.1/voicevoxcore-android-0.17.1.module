@@ -1,0 +1,117 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "jp.hiroshiba.voicevoxcore",
+    "module": "voicevoxcore-android",
+    "version": "0.17.1",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib-jdk8",
+          "version": {
+            "requires": "1.9.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "voicevoxcore-android-0.17.1.aar",
+          "url": "voicevoxcore-android-0.17.1.aar",
+          "size": 4036225,
+          "sha512": "d0aa33c64e99e62a7b8358fad0415d5140abac3e41c845abc8e77642a97e2ae3a7d74a575af32c31eb3ff7e909e0357612ba508062bb5b3e8ab6765526770206",
+          "sha256": "672bdf2dac5c426f7137dc0b15f731e32c813fb6c4c77dc9a7a246198549ad29",
+          "sha1": "caa094c0b9a253aeb28153660d655deeac50ff9a",
+          "md5": "8b1657377a578d476c179023d39fbf34"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.google.code.gson",
+          "module": "gson",
+          "version": {
+            "requires": "2.10.1"
+          }
+        },
+        {
+          "group": "jakarta.validation",
+          "module": "jakarta.validation-api",
+          "version": {
+            "requires": "3.0.2"
+          }
+        },
+        {
+          "group": "jakarta.annotation",
+          "module": "jakarta.annotation-api",
+          "version": {
+            "requires": "2.1.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib-jdk8",
+          "version": {
+            "requires": "1.9.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "voicevoxcore-android-0.17.1.aar",
+          "url": "voicevoxcore-android-0.17.1.aar",
+          "size": 4036225,
+          "sha512": "d0aa33c64e99e62a7b8358fad0415d5140abac3e41c845abc8e77642a97e2ae3a7d74a575af32c31eb3ff7e909e0357612ba508062bb5b3e8ab6765526770206",
+          "sha256": "672bdf2dac5c426f7137dc0b15f731e32c813fb6c4c77dc9a7a246198549ad29",
+          "sha1": "caa094c0b9a253aeb28153660d655deeac50ff9a",
+          "md5": "8b1657377a578d476c179023d39fbf34"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseJavaDocPublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "javadoc",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "voicevoxcore-android-0.17.1-javadoc.jar",
+          "url": "voicevoxcore-android-0.17.1-javadoc.jar",
+          "size": 517542,
+          "sha512": "5fa1f10c6c509c26b146fb3dfc72ee2376214a74c6bef3db07b00d91f004ced097c82baa36ea63a415c28b9e080977e4eec64da9f58824401770795f960623e4",
+          "sha256": "1efbe362350f16fc9dfc18296c152533a7f30d95caa8c9f69ca1624fe2a80232",
+          "sha1": "8e50ea7b12d466e28c4e72350482aec65b6ebb85",
+          "md5": "0a462e91b2f03a84d7b33c3adcfa6590"
+        }
+      ]
+    }
+  ]
+}
