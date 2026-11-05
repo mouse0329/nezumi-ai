@@ -1,7 +1,13 @@
 package com.nezumi_ai.data.miniapp
 
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Mini App Platform 仕様 v1.1 §11 Manifest の Kotlin 表現。
@@ -17,13 +23,13 @@ data class MiniAppManifest(
     val entry: String,
     val permissions: List<String>
 ) {
-    fun toJson(): JSONObject = JSONObject().apply {
+    fun toJson(): JsonObject = buildJsonObject {
         put("id", id)
         put("name", name)
         put("version", version)
         put("publisher", publisher)
         put("entry", entry)
-        put("permissions", JSONArray().apply { permissions.forEach { put(it) } })
+        put("permissions", buildJsonArray { permissions.forEach { add(JsonPrimitive(it)) } })
     }
 
     companion object {
@@ -48,12 +54,12 @@ data class MiniAppManifest(
          */
         fun parse(json: String): MiniAppManifest {
             val obj = try {
-                JSONObject(json)
+                Json.parseToJsonElement(json).jsonObject
             } catch (e: Exception) {
                 throw MiniAppException("PACKAGE_INVALID", "manifest.json がJSONとして不正です: ${e.message}")
             }
             fun requiredString(key: String): String {
-                val v = obj.optString(key, "")
+                val v = (obj[key] as? JsonPrimitive)?.content.orEmpty()
                 if (v.isBlank()) {
                     throw MiniAppException("PACKAGE_INVALID", "manifest.json に必須項目 '$key' がありません")
                 }
@@ -70,25 +76,20 @@ data class MiniAppManifest(
             if (entry.startsWith("/") || entry.split('/').any { it == ".." }) {
                 throw MiniAppException("PACKAGE_INVALID", "manifest.json の entry が不正です: $entry")
             }
-            val permissions = mutableListOf<String>()
-            val arr = obj.optJSONArray("permissions")
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    val p = arr.optString(i, "")
-                    if (p.isNotBlank()) permissions.add(p)
-                }
-            }
+            val permissions = (obj["permissions"] as? JsonArray).orEmpty()
+                .mapNotNull { (it as? JsonPrimitive)?.content }
+                .filter { it.isNotBlank() }
             return MiniAppManifest(
                 id = id,
                 name = requiredString("name"),
                 version = requiredString("version"),
-                publisher = obj.optString("publisher", "").ifBlank { "Unknown" },
+                publisher = (obj["publisher"] as? JsonPrimitive)?.content.orEmpty().ifBlank { "Unknown" },
                 entry = entry,
                 permissions = permissions
             )
         }
 
-        fun fromJson(obj: JSONObject): MiniAppManifest = parse(obj.toString())
+        fun fromJson(json: String): MiniAppManifest = parse(json)
     }
 }
 

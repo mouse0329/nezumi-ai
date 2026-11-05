@@ -1,15 +1,19 @@
 package com.nezumi_ai.data.mcp
 
 import android.util.Log
+import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import io.ktor.client.HttpClient
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -23,7 +27,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class McpClient(
     private val config: McpServerConfig,
-    private val client: OkHttpClient = defaultClient
+    private val client: HttpClient = CloudHttpClient.instance
 ) {
     private val requestId = AtomicLong(1L)
     private var sessionId: String? = null
@@ -94,23 +98,13 @@ class McpClient(
     /** initialize が通るかだけを見る軽量ping。UIの「接続テスト」で利用。 */
     suspend fun ping(): RpcResult = initialize()
 
-    private fun buildRequest(bodyJson: JSONObject): Request {
+    private fun validateEndpoint() {
         check(PrivateIpValidator.isCleartextAllowed(config.url)) {
             "Blocked request to disallowed URL (http:// to non-private host, or invalid scheme): ${config.url}"
         }
-        val builder = Request.Builder()
-            .url(config.url)
-            .header("Accept", "application/json, text/event-stream")
-            .header("Content-Type", "application/json")
-            .header("MCP-Protocol-Version", PROTOCOL_VERSION)
-        sessionId?.let { builder.header("Mcp-Session-Id", it) }
-        config.headers.forEach { (k, v) -> if (k.isNotBlank()) builder.header(k, v) }
-        return builder.post(
-            bodyJson.toString().toRequestBody("application/json".toMediaType())
-        ).build()
     }
 
-    private fun rpc(method: String, params: JSONObject): RpcResult {
+    private suspend fun rpc(method: String, params: JSONObject): RpcResult {
         val id = requestId.getAndIncrement()
         val body = JSONObject().apply {
             put("jsonrpc", "2.0")
@@ -119,14 +113,22 @@ class McpClient(
             put("params", params)
         }
         return runCatching {
-            client.newCall(buildRequest(body)).execute().use { resp ->
+            validateEndpoint()
+            val resp = client.post(config.url) {
+                header("Accept", "application/json, text/event-stream")
+                contentType(ContentType.Application.Json)
+                header("MCP-Protocol-Version", PROTOCOL_VERSION)
+                sessionId?.let { header("Mcp-Session-Id", it) }
+                config.headers.forEach { (k, v) -> if (k.isNotBlank()) header(k, v) }
+                setBody(body.toString())
+            }
                 // MCP セッション ID を追跡（Streamable HTTP 用）
-                resp.header("Mcp-Session-Id")?.let { sessionId = it }
-                val text = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) {
-                    return RpcResult(false, null, "HTTP ${resp.code}: ${text.take(300)}")
+                resp.headers["Mcp-Session-Id"]?.let { sessionId = it }
+                val text = resp.bodyAsText()
+                if (!resp.status.isSuccess()) {
+                    return RpcResult(false, null, "HTTP ${resp.status.value}: ${text.take(300)}")
                 }
-                val contentType = resp.header("Content-Type").orEmpty().lowercase()
+                val contentType = resp.headers["Content-Type"].orEmpty().lowercase()
                 val payload = if (contentType.contains("text/event-stream")) {
                     extractJsonFromSseStream(text)
                 } else {
@@ -140,21 +142,28 @@ class McpClient(
                     return RpcResult(false, null, "RPC error ${err.optInt("code")}: ${err.optString("message")}")
                 }
                 RpcResult(true, obj.optJSONObject("result") ?: JSONObject(), null)
-            }
         }.getOrElse { e ->
             Log.w(TAG, "rpc($method) failed", e)
             RpcResult(false, null, e.message ?: e.javaClass.simpleName)
         }
     }
 
-    private fun notify(method: String, params: JSONObject) {
+    private suspend fun notify(method: String, params: JSONObject) {
         val body = JSONObject().apply {
             put("jsonrpc", "2.0")
             put("method", method)
             put("params", params)
         }
         runCatching {
-            client.newCall(buildRequest(body)).execute().use { it.body?.close() }
+            validateEndpoint()
+            client.post(config.url) {
+                header("Accept", "application/json, text/event-stream")
+                contentType(ContentType.Application.Json)
+                header("MCP-Protocol-Version", PROTOCOL_VERSION)
+                sessionId?.let { header("Mcp-Session-Id", it) }
+                config.headers.forEach { (k, v) -> if (k.isNotBlank()) header(k, v) }
+                setBody(body.toString())
+            }
         }
     }
 
@@ -183,14 +192,6 @@ class McpClient(
     companion object {
         private const val TAG = "McpClient"
         private const val PROTOCOL_VERSION = "2025-03-26"
-
-        private val defaultClient: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
-                .build()
-        }
 
         /** tools/call のレスポンスから、テキスト結果を平坦化して取り出すヘルパ。 */
         fun flattenToolCallResult(result: JSONObject?): String {

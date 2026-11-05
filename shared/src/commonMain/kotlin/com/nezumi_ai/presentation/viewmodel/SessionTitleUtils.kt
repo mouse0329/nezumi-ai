@@ -2,7 +2,7 @@ package com.nezumi_ai.presentation.viewmodel
 
 const val DEFAULT_SESSION_TITLE = "新しいチャット"
 
-internal fun buildSessionTitle(userMessage: String, aiResponse: String): String {
+fun buildSessionTitle(userMessage: String, aiResponse: String): String {
     val source = sequenceOf(userMessage, aiResponse)
         // モデル向けの埋め込みタグ (テキスト/ドキュメント添付の <txtfile>、動画メタの
         // <video>) はタイトルに採用しない。ここで剥がしてから先頭の実質本文を選ぶ。

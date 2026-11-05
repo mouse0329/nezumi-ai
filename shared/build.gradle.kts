@@ -1,12 +1,13 @@
 // Kotlin Multiplatform 共有モジュール (nezumi-ai iOS 化の土台)。
 //
-// 方針: iOS 化の最初の一手として、Android / iOS で共有可能な「純粋 Kotlin ロジック」
-// (プロンプト構築・パーサ系) を commonMain に移す受け皿を用意する。
+// 方針: Android / iOS で共有可能なドメインモデル、UseCase、Repository、
+// パーサ、プロトコルを commonMain に集約し、OS依存処理を platform source set に分ける。
 //
 // 参照: docs/ios/nezumi-ai-kmp-report.md, docs/ios/nezumi-ai-kmp-progress-summary.md
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.20"
     alias(libs.plugins.android.kotlin.multiplatform.library)
     alias(libs.plugins.ksp)
     alias(libs.plugins.androidx.room)
@@ -41,6 +42,12 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
+            // Compose Multiplatform UI。Androidのandroidx.composeではなく、
+            // Android/iOS共通のComposeランタイムを利用する。
+            implementation("org.jetbrains.compose.runtime:runtime:1.7.1")
+            implementation("org.jetbrains.compose.foundation:foundation:1.7.1")
+            implementation("org.jetbrains.compose.material3:material3:1.7.1")
+            implementation("org.jetbrains.compose.ui:ui:1.7.1")
             // Room (KMP)。エンティティ・DAO を共有する。DB 本体のビルダーはプラットフォーム別に実装する。
             implementation(libs.androidx.room.runtime)
             implementation(libs.androidx.sqlite.bundled)
@@ -53,9 +60,8 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
         }
         androidMain.dependencies {
-            // Android 側の Ktor エンジン。既存 OkHttp と同じ挙動 (タイムアウト等) を
-            // 再現しやすい OkHttp エンジンを採用する。
-            implementation(libs.ktor.client.okhttp)
+            // Android の HTTP 実装に使う Ktor CIO エンジン。
+            implementation(libs.ktor.client.cio)
             // PlatformSecureStore の Android 実装 (EncryptedSharedPreferences) 用。
             // バージョンは app 側 (app/build.gradle.kts) と揃える。
             implementation(libs.androidx.security.crypto)

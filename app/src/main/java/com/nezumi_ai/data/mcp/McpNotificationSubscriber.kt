@@ -1,6 +1,7 @@
 package com.nezumi_ai.data.mcp
 
 import android.util.Log
+import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -10,13 +11,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.isSuccess
+import io.ktor.utils.io.readUTF8Line
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 
 /**
  * MCP サーバーから `notifications/tools/list_changed` を SSE で購読し、
@@ -77,37 +78,31 @@ class McpNotificationSubscriber private constructor() {
         if (!runCatching { PrivateIpValidator.isCleartextAllowed(cfg.url) }.getOrDefault(true)) {
             return@withContext false
         }
-        val builder = Request.Builder()
-            .url(cfg.url)
-            .header("Accept", "text/event-stream")
-            .header("MCP-Protocol-Version", "2025-03-26")
-        cfg.headers.forEach { (k, v) -> if (k.isNotBlank()) builder.header(k, v) }
-        val req = builder.get().build()
-
-        val call = streamingClient.newCall(req)
-        return@withContext call.execute().use { resp: Response ->
-            if (!resp.isSuccessful) {
-                Log.w(TAG, "SSE stream returned ${resp.code} for ${cfg.name}")
-                return@use false
-            }
-            val body = resp.body ?: return@use false
-            val reader = BufferedReader(body.charStream())
-            val eventBuf = StringBuilder()
-            while (scope.isActive) {
-                val line = reader.readLine() ?: break
-                when {
-                    line.startsWith("data:") -> {
-                        eventBuf.append(line.removePrefix("data:").trimStart())
-                        eventBuf.append('\n')
-                    }
-                    line.isEmpty() && eventBuf.isNotEmpty() -> {
-                        handleEvent(cfg, eventBuf.toString().trim())
-                        eventBuf.setLength(0)
-                    }
+        val resp = CloudHttpClient.instance.get(cfg.url) {
+            header("Accept", "text/event-stream")
+            header("MCP-Protocol-Version", "2025-03-26")
+            cfg.headers.forEach { (k, v) -> if (k.isNotBlank()) header(k, v) }
+        }
+        if (!resp.status.isSuccess()) {
+                Log.w(TAG, "SSE stream returned ${resp.status.value} for ${cfg.name}")
+                return@withContext false
+        }
+        val channel = resp.bodyAsChannel()
+        val eventBuf = StringBuilder()
+        while (scope.isActive) {
+            val line = channel.readUTF8Line() ?: break
+            when {
+                line.startsWith("data:") -> {
+                    eventBuf.append(line.removePrefix("data:").trimStart())
+                    eventBuf.append('\n')
+                }
+                line.isEmpty() && eventBuf.isNotEmpty() -> {
+                    handleEvent(cfg, eventBuf.toString().trim())
+                    eventBuf.setLength(0)
                 }
             }
-            true
         }
+        true
     }
 
     private fun handleEvent(cfg: McpServerConfig, jsonText: String) {
@@ -125,16 +120,6 @@ class McpNotificationSubscriber private constructor() {
 
     companion object {
         private const val TAG = "McpNotifSub"
-
-        // 長時間ストリーム用に readTimeout を切る
-        private val streamingClient: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(0, TimeUnit.MILLISECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(true)
-                .build()
-        }
 
         @Volatile
         private var instance: McpNotificationSubscriber? = null

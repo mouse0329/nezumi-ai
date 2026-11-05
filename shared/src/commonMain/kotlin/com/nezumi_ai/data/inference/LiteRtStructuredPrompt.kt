@@ -1,7 +1,14 @@
 package com.nezumi_ai.data.inference
 
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 
 /**
  * LiteRT-LM (Conversation API) 経路の構造化プロンプトペイロード。
@@ -49,20 +56,20 @@ object LiteRtStructuredPrompt {
         currentMessageId: Long?,
         currentText: String
     ): String {
-        val json = JSONObject()
-        json.put("system", systemInstruction)
-        val arr = JSONArray()
-        history.forEach { turn ->
-            arr.put(
-                JSONObject()
-                    .put("id", turn.id)
-                    .put("role", turn.role)
-                    .put("content", turn.content)
-            )
+        val json = buildJsonObject {
+            put("system", systemInstruction)
+            put("history", buildJsonArray {
+                history.forEach { turn ->
+                    add(buildJsonObject {
+                        put("id", turn.id)
+                        put("role", turn.role)
+                        put("content", turn.content)
+                    })
+                }
+            })
+            currentMessageId?.let { put("currentId", it) }
+            put("current", currentText)
         }
-        json.put("history", arr)
-        if (currentMessageId != null) json.put("currentId", currentMessageId)
-        json.put("current", currentText)
         return PREFIX + json.toString()
     }
 
@@ -70,24 +77,20 @@ object LiteRtStructuredPrompt {
     fun decode(prompt: String): Payload? {
         if (!isStructured(prompt)) return null
         return runCatching {
-            val json = JSONObject(prompt.removePrefix(PREFIX))
-            val history = mutableListOf<HistoryTurn>()
-            val arr = json.optJSONArray("history")
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    val obj = arr.getJSONObject(i)
-                    history += HistoryTurn(
-                        id = obj.optLong("id", -1L),
-                        role = obj.optString("role", "user"),
-                        content = obj.optString("content", "")
-                    )
-                }
+            val json = Json.parseToJsonElement(prompt.removePrefix(PREFIX)).jsonObject
+            val history = json["history"]?.jsonArray.orEmpty().map { element ->
+                val obj = element.jsonObject
+                HistoryTurn(
+                    id = obj["id"]?.jsonPrimitive?.longOrNull ?: -1L,
+                    role = obj["role"]?.jsonPrimitive?.content ?: "user",
+                    content = obj["content"]?.jsonPrimitive?.content ?: ""
+                )
             }
             Payload(
-                systemInstruction = json.optString("system", ""),
+                systemInstruction = json["system"]?.jsonPrimitive?.content ?: "",
                 history = history,
-                currentMessageId = if (json.has("currentId")) json.getLong("currentId") else null,
-                currentText = json.optString("current", "")
+                currentMessageId = json["currentId"]?.jsonPrimitive?.longOrNull,
+                currentText = json["current"]?.jsonPrimitive?.content ?: ""
             )
         }.getOrNull()
     }

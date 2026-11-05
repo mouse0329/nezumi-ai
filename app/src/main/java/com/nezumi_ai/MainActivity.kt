@@ -58,7 +58,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.repository.ChatChunkRepository
 import com.nezumi_ai.presentation.ui.screen.DrawerContent

@@ -3,7 +3,7 @@ package com.nezumi_ai.data.inference.cloud
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 
-/** クラウド推論共通 Ktor HttpClient。タイムアウト方針は旧 OkHttp 実装を再現。 */
+/** Android/CIO・iOS/Darwin のプラットフォームエンジンを使う共通 Ktor HttpClient。 */
 object CloudHttpClient {
     val instance: HttpClient by lazy {
         HttpClient {

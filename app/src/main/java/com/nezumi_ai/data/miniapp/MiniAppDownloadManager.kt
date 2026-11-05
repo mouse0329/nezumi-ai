@@ -2,18 +2,21 @@ package com.nezumi_ai.data.miniapp
 
 import android.content.Context
 import android.util.Log
+import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.isSuccess
+import io.ktor.utils.io.readAvailable
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 
 /**
  * 仕様 v1.1 §29 Download API。
@@ -82,11 +85,6 @@ class MiniAppDownloadManager private constructor(
     private val cancelFlags = ConcurrentHashMap<String, Boolean>()
     private val pauseFlags = ConcurrentHashMap<String, Boolean>()
     private val stateLock = Any()
-
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .build()
 
     private fun stateFile(): File = File(dataRoot, ".downloads.json")
 
@@ -184,22 +182,21 @@ class MiniAppDownloadManager private constructor(
             eventBus?.emit("download.progress", org.json.JSONObject().put("id", id).put("state", "running").toString())
 
             val existing = if (resume && part.exists()) part.length() else 0L
-            val request = Request.Builder().url(entry.url).apply {
+            val resp = CloudHttpClient.instance.get(entry.url) {
                 if (existing > 0) header("Range", "bytes=$existing-")
-            }.build()
-
-            httpClient.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful && resp.code != 206) {
-                    throw MiniAppException("DOWNLOAD_FAILED", "HTTP ${resp.code}")
-                }
-                val body = resp.body ?: throw MiniAppException("DOWNLOAD_FAILED", "レスポンスが空です")
-                val total = if (resp.code == 206) existing + body.contentLength() else body.contentLength()
+            }
+            val partial = resp.status.value == 206
+            if (!resp.status.isSuccess() && !partial) {
+                throw MiniAppException("DOWNLOAD_FAILED", "HTTP ${resp.status.value}")
+            }
+            val bodyLength = resp.headers["Content-Length"]?.toLongOrNull() ?: -1L
+            val total = if (partial && bodyLength >= 0) existing + bodyLength else bodyLength
                 update(id) { it.totalBytes = total; it.bytesDownloaded = existing }
 
                 dest.parentFile?.mkdirs()
-                val append = resume && resp.code == 206 && existing > 0
+                val append = resume && partial && existing > 0
                 FileOutputStream(part, append).use { out ->
-                    val input = body.byteStream()
+                    val channel = resp.bodyAsChannel()
                     val buf = ByteArray(64 * 1024)
                     var downloaded = existing
                     var lastEmit = 0L
@@ -213,7 +210,8 @@ class MiniAppDownloadManager private constructor(
                             update(id) { it.state = "paused"; it.bytesDownloaded = downloaded }
                             return
                         }
-                        val n = input.read(buf)
+                        val n = channel.readAvailable(buf, 0, buf.size)
+                        if (n == 0) continue
                         if (n < 0) break
                         out.write(buf, 0, n)
                         downloaded += n
@@ -231,7 +229,6 @@ class MiniAppDownloadManager private constructor(
                         }
                     }
                 }
-            }
             if (!part.renameTo(dest)) {
                 part.copyTo(dest, overwrite = true)
                 part.delete()

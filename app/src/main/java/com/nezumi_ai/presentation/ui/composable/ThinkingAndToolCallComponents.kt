@@ -51,7 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.R

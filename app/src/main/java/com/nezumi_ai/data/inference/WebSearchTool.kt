@@ -1,9 +1,12 @@
 package com.nezumi_ai.data.inference
 
 import android.util.Log
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import com.nezumi_ai.data.inference.cloud.CloudHttpClient
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.parameter
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.isSuccess
 import org.json.JSONObject
 
 private const val WEB_SEARCH_TAG = "WebSearchTool"
@@ -21,37 +24,21 @@ internal suspend fun performBraveSearch(
     safeSearch: String,
     apiKey: String
 ): List<Map<String, Any?>> {
-    val client = OkHttpClient()
-    
-    // APIエンドポイント構築
-    val url = "https://api.search.brave.com/res/v1/web/search".toHttpUrl().newBuilder()
-        .addQueryParameter("q", query)
-        .addQueryParameter("count", count.toString())
-        .addQueryParameter("offset", offset.toString())
-        .addQueryParameter("country", country.lowercase())
-        .addQueryParameter("search_lang", searchLang.lowercase())
-        .addQueryParameter("safesearch", safeSearch)
-        .build()
-    
-    Log.d(WEB_SEARCH_TAG, "Request URL: $url")
-    
-    val request = Request.Builder()
-        .url(url)
-        .get()
-        .addHeader("Accept", "application/json")
-        .addHeader("X-Subscription-Token", apiKey)
-        .build()
-    
-    val response = client.newCall(request).execute()
-    
-    return response.use { resp ->
-        if (!resp.isSuccessful) {
-            throw Exception("API request failed: ${resp.code} ${resp.message}")
-        }
-        
-        val body = resp.body?.string() ?: throw Exception("Empty response body")
-        parseBraveSearchResponse(body)
+    Log.d(WEB_SEARCH_TAG, "Requesting Brave Search")
+    val response = CloudHttpClient.instance.get("https://api.search.brave.com/res/v1/web/search") {
+        parameter("q", query)
+        parameter("count", count)
+        parameter("offset", offset)
+        parameter("country", country.lowercase())
+        parameter("search_lang", searchLang.lowercase())
+        parameter("safesearch", safeSearch)
+        header("Accept", "application/json")
+        header("X-Subscription-Token", apiKey)
     }
+    if (!response.status.isSuccess()) {
+        throw Exception("API request failed: ${response.status.value} ${response.status.description}")
+    }
+    return parseBraveSearchResponse(response.bodyAsText())
 }
 
 private fun parseBraveSearchResponse(json: String): List<Map<String, Any?>> {

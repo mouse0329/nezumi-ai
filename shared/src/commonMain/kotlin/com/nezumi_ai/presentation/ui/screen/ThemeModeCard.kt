@@ -12,7 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.nezumi_ai.utils.PreferencesHelper
+import com.nezumi_ai.presentation.ui.ThemeModeSpec
 
 @Composable
 fun ThemeModeCard(
@@ -31,9 +31,9 @@ fun ThemeModeCard(
         )
 
         listOf(
-            PreferencesHelper.THEME_SYSTEM to "システム設定に従う",
-            PreferencesHelper.THEME_LIGHT to "ライト",
-            PreferencesHelper.THEME_DARK to "ダーク"
+            ThemeModeSpec.SYSTEM to "システム設定に従う",
+            ThemeModeSpec.LIGHT to "ライト",
+            ThemeModeSpec.DARK to "ダーク"
         ).forEach { (mode, label) ->
             Row(
                 modifier = Modifier

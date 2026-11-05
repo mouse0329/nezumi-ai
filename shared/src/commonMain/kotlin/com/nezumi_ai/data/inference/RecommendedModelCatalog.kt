@@ -24,7 +24,7 @@ object RecommendedModelCatalog {
      * @param shortDescription 1行説明（セットアップ等）
      * @param engine 推論エンジン種別
      * @param estimatedSizeBytes 未取得時の概算サイズ（リソース警告用）
-     * @param localModel LiteRT のときのみ対応する LocalModel。GGUF は null
+     * @param localModelId LiteRT のときのみ対応するプラットフォームモデルID。GGUF は null
      * @param hfRepo GGUF のとき Hugging Face リポジトリ（owner/name）
      * @param hfFile GGUF のときリポジトリ内ファイル名
      * @param recommended true ならセットアップ・モデル管理のおすすめ欄に出す
@@ -35,7 +35,7 @@ object RecommendedModelCatalog {
         val shortDescription: String,
         val engine: Engine,
         val estimatedSizeBytes: Long,
-        val localModel: ModelFileManager.LocalModel? = null,
+        val localModelId: String? = null,
         val hfRepo: String? = null,
         val hfFile: String? = null,
         val recommended: Boolean = true,
@@ -53,7 +53,7 @@ object RecommendedModelCatalog {
             shortDescription = "軽量・高速。まずはこれ（LiteRT）",
             engine = Engine.LITERT,
             estimatedSizeBytes = 2_400_000_000L,
-            localModel = ModelFileManager.LocalModel.GEMMA4_2B,
+            localModelId = "GEMMA4_2B",
         ),
         Entry(
             id = "Gemma4-4B",
@@ -61,7 +61,7 @@ object RecommendedModelCatalog {
             shortDescription = "精度寄り。ハイエンド端末向け（LiteRT）",
             engine = Engine.LITERT,
             estimatedSizeBytes = 3_410_000_000L,
-            localModel = ModelFileManager.LocalModel.GEMMA4_4B,
+            localModelId = "GEMMA4_4B",
         ),
 
         // --- 新規おすすめ GGUF ---
@@ -98,6 +98,6 @@ object RecommendedModelCatalog {
 
     fun findById(id: String): Entry? = entries.firstOrNull { it.id == id }
 
-    fun findByLocalModel(model: ModelFileManager.LocalModel): Entry? =
-        entries.firstOrNull { it.localModel == model }
+    fun findByLocalModelId(modelId: String): Entry? =
+        entries.firstOrNull { it.localModelId == modelId }
 }

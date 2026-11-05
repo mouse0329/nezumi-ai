@@ -1,5 +1,7 @@
 package com.nezumi_ai.sd
 
+import com.nezumi_ai.data.database.randomUuidString
+
 /**
  * 画像生成パラメータのメタデータ
  */
@@ -23,7 +25,7 @@ data class ImageGenerationMetadata(
  * 生成キュー用のアイテム
  */
 data class GenerationQueueItem(
-    val id: String = java.util.UUID.randomUUID().toString(),
+    val id: String = randomUuidString(),
     val count: Int = 1,                      // 何番目の生成か (1-10)
     val prompt: String,
     val negativePrompt: String,

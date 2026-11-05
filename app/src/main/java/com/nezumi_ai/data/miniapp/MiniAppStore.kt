@@ -32,7 +32,7 @@ class MiniAppStore private constructor(private val context: Context) {
         val installedAt: Long
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
-            put("manifest", manifest.toJson())
+            put("manifest", JSONObject(manifest.toJson().toString()))
             put("keyId", keyId ?: JSONObject.NULL)
             put("trusted", trusted)
             put("devMode", devMode)
@@ -40,13 +40,20 @@ class MiniAppStore private constructor(private val context: Context) {
         }
 
         companion object {
-            fun fromJson(obj: JSONObject): InstalledApp = InstalledApp(
-                manifest = MiniAppManifest.fromJson(obj.getJSONObject("manifest")),
-                keyId = if (obj.isNull("keyId")) null else obj.optString("keyId", null),
-                trusted = obj.optBoolean("trusted", false),
-                devMode = obj.optBoolean("devMode", false),
-                installedAt = obj.optLong("installedAt", 0L)
-            )
+            fun fromJson(obj: JSONObject): InstalledApp {
+                val manifestJson = when (val value = obj.opt("manifest")) {
+                    is JSONObject -> value.toString() // Existing registry format.
+                    is String -> value
+                    else -> throw IllegalArgumentException("manifest is missing")
+                }
+                return InstalledApp(
+                    manifest = MiniAppManifest.fromJson(manifestJson),
+                    keyId = if (obj.isNull("keyId")) null else obj.optString("keyId", null),
+                    trusted = obj.optBoolean("trusted", false),
+                    devMode = obj.optBoolean("devMode", false),
+                    installedAt = obj.optLong("installedAt", 0L)
+                )
+            }
         }
     }
 

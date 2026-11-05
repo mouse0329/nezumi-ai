@@ -1,5 +1,6 @@
 package com.nezumi_ai.data.inference
 
+import com.nezumi_ai.data.database.availableProcessorCount
 import kotlin.math.roundToInt
 
 data class InferenceConfig(
@@ -106,12 +107,12 @@ data class InferenceConfig(
         const val DEFAULT_MAX_TOOL_ROUNDS = 5
 
         fun getDefaultThreadCount(): Int {
-            val availableCores = Runtime.getRuntime().availableProcessors()
+            val availableCores = availableProcessorCount().coerceAtLeast(MIN_THREADS)
             return (availableCores * 0.7f).roundToInt().coerceIn(MIN_THREADS, availableCores)
         }
 
         fun getMaxThreadCount(): Int {
-            return Runtime.getRuntime().availableProcessors().coerceAtLeast(MIN_THREADS)
+            return availableProcessorCount().coerceAtLeast(MIN_THREADS)
         }
     }
 

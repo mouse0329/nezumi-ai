@@ -3,6 +3,7 @@ package com.nezumi_ai.data.inference
 import com.nezumi_ai.data.inference.cloud.CloudLog
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -16,8 +17,15 @@ data class CloudToolResultCard(
 ) {
     companion object {
         private const val TAG = "ToolResultCard"
+        private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+        fun listFromJsonArray(jsonArray: String): List<CloudToolResultCard> =
+            runCatching { json.decodeFromString<List<CloudToolResultCard>>(jsonArray) }
+                .onFailure { e -> CloudLog.w(TAG, "deserialize failed: ${e.message}") }
+                .getOrDefault(emptyList())
+
         fun listToJsonArray(cards: List<CloudToolResultCard>): String {
-            return runCatching { Json.encodeToString(cards) }
+            return runCatching { json.encodeToString(cards) }
                 .onFailure { e -> CloudLog.w(TAG, "serialize failed: ${e.message}") }
                 .getOrDefault("[]")
         }

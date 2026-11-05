@@ -225,9 +225,10 @@ fun SkillDirectoryDialog(
                             stringResource(R.string.skills_directory_title),
                             style = MaterialTheme.typography.bodySmall
                         )
-                        if (skill.invalid && skill.invalidReason != null) {
+                        val invalidReason = skill.invalidReason
+                        if (skill.invalid && invalidReason != null) {
                             Text(
-                                skill.invalidReason,
+                                invalidReason,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error
                             )

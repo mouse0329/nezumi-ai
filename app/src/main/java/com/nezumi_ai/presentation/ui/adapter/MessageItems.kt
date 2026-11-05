@@ -72,7 +72,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.ToolResultCard

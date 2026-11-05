@@ -3,7 +3,8 @@ package com.nezumi_ai.data.repository
 import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.ToolCallHistoryDao
 import com.nezumi_ai.data.database.entity.ToolCallHistoryEntity
-import com.nezumi_ai.data.inference.ToolResultCard
+import com.nezumi_ai.data.database.currentTimeMillis
+import com.nezumi_ai.data.inference.CloudToolResultCard
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -20,10 +21,10 @@ class ToolCallHistoryRepository(
 
     suspend fun recordFromToolResultsJson(sessionId: Long, messageId: Long?, toolResultsJson: String?) {
         if (toolResultsJson.isNullOrBlank()) return
-        val cards = ToolResultCard.listFromJsonArray(toolResultsJson)
+        val cards = CloudToolResultCard.listFromJsonArray(toolResultsJson)
         if (cards.isEmpty()) return
         val sessionName = sessionDao?.getSessionById(sessionId)?.name
-        val now = System.currentTimeMillis()
+        val now = currentTimeMillis()
         dao.insertAll(cards.map { card ->
             ToolCallHistoryEntity(
                 timestamp = now,

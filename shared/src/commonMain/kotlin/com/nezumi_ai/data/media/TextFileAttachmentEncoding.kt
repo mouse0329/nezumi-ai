@@ -78,9 +78,7 @@ object TextFileAttachmentEncoding {
             .mapNotNull { tryDecode(it) }
     }
 
-    private fun enc(s: String): String =
-        java.net.URLEncoder.encode(s, Charsets.UTF_8.name())
+    private fun enc(s: String): String = UrlFormCodec.encode(s)
 
-    private fun dec(s: String): String =
-        java.net.URLDecoder.decode(s, Charsets.UTF_8.name())
+    private fun dec(s: String): String = UrlFormCodec.decode(s)
 }

@@ -3,13 +3,15 @@ package com.nezumi_ai.data.miniapp
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.isSuccess
+import io.ktor.utils.io.readAvailable
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
@@ -29,11 +31,6 @@ object MiniAppInstaller {
     private const val MAX_ZIP_BYTES = 256L * 1024 * 1024   // 256MB
     private const val MAX_ENTRY_BYTES = 64L * 1024 * 1024  // 1ファイル64MB
     private const val MAX_ENTRIES = 4096
-
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .build()
 
     /** [b] までの検証結果。同意待ちの UI がここからインストール確定へ進む。 */
     sealed class PendingInstall {
@@ -231,33 +228,34 @@ object MiniAppInstaller {
         return bytes
     }
 
-    private fun downloadZip(url: String): ByteArray {
+    private suspend fun downloadZip(url: String): ByteArray {
         if (!url.startsWith("https://") && !url.startsWith("http://")) {
             throw MiniAppException("DOWNLOAD_FAILED", "URL は http(s):// である必要があります")
         }
-        val request = Request.Builder().url(url).build()
         return try {
-            httpClient.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    throw MiniAppException("DOWNLOAD_FAILED", "ダウンロードに失敗しました (HTTP ${resp.code})")
-                }
-                val body = resp.body ?: throw MiniAppException("DOWNLOAD_FAILED", "レスポンスが空です")
-                val out = ByteArrayOutputStream()
-                body.byteStream().use { input ->
-                    val buf = ByteArray(64 * 1024)
-                    var total = 0L
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        total += n
-                        if (total > MAX_ZIP_BYTES) {
-                            throw MiniAppException("PACKAGE_INVALID", "ZIP が大きすぎます（上限 256MB）")
-                        }
-                        out.write(buf, 0, n)
-                    }
-                }
-                out.toByteArray()
+            val response = CloudHttpClient.instance.get(url)
+            if (!response.status.isSuccess()) {
+                throw MiniAppException("DOWNLOAD_FAILED", "ダウンロードに失敗しました (HTTP ${response.status.value})")
             }
+            val length = response.headers["Content-Length"]?.toLongOrNull()
+            if (length != null && length > MAX_ZIP_BYTES) {
+                throw MiniAppException("PACKAGE_INVALID", "ZIP が大きすぎます（上限 256MB）")
+            }
+            val channel = response.bodyAsChannel()
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val n = channel.readAvailable(buf, 0, buf.size)
+                if (n < 0) break
+                if (n == 0) continue
+                total += n
+                if (total > MAX_ZIP_BYTES) {
+                    throw MiniAppException("PACKAGE_INVALID", "ZIP が大きすぎます（上限 256MB）")
+                }
+                out.write(buf, 0, n)
+            }
+            out.toByteArray()
         } catch (e: MiniAppException) {
             throw e
         } catch (e: Exception) {
