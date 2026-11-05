@@ -90,13 +90,15 @@ KOTLIN & APPLICATION RUNTIME
   License: Apache License 2.0
   https://github.com/coil-kt/coil
   Includes:
-    - io.coil-kt:coil-compose
+    - io.coil-kt.coil3:coil-compose
+    - io.coil-kt.coil3:coil-network-ktor3
 
-* OkHttp
+* Ktor Client
   License: Apache License 2.0
-  https://github.com/square/okhttp
+  https://github.com/ktorio/ktor
   Includes:
-    - com.squareup.okhttp3:okhttp
+    - ktor-client-core
+    - ktor-client-cio
 
 * AppAuth for Android
   License: Apache License 2.0
@@ -231,6 +233,14 @@ NATIVE COMPONENTS
 ================================================================================
 TEXT-TO-SPEECH (VOICEVOX)
 ================================================================================
+
+* VOICEVOX CORE
+  License: MIT License
+  https://github.com/VOICEVOX/voicevox_core
+  Includes:
+    - Android CORE AAR (currently 0.16.4 in the Android app)
+    - Desktop Java API and native bridge (0.17.1; Windows, macOS, Linux)
+    - iOS/macOS XCFramework (0.17.1; source archive staged under third_party/)
 
 * VOICEVOX ONNX Runtime
   License: See voicevox_onnxruntime_TERMS.txt (bundled)

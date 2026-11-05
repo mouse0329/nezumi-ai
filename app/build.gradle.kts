@@ -310,12 +310,10 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("net.openid:appauth:0.11.1")
 
-    implementation("io.coil-kt:coil-compose:2.7.0")
-    implementation("com.squareup.okhttp3:okhttp:5.5.1")
-    // クラウド推論エンジン (Claude / Gemini / OpenAI / LM Studio) の
-    // SSE ストリームを行単位で解析するために okhttp-sse を追加。
-    // Ollama は NDJSON ストリームなので通常の Response.body().source() で処理する。
-    implementation("com.squareup.okhttp3:okhttp-sse:5.5.0")
+    implementation("io.coil-kt.coil3:coil-compose:3.4.0")
+    implementation("io.coil-kt.coil3:coil-network-ktor3:3.4.0")
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.cio)
 
     // クラウドプロバイダ用 API キー / Base URL を暗号化して保存するために使用。
     // Android Keystore の AES-256 マスターキーで EncryptedSharedPreferences を
