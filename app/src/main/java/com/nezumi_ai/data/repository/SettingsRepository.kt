@@ -885,7 +885,7 @@ class SettingsRepository(
         runCatching { enforceChatHistoryLimit() }
     }
 
-    suspend fun enforceChatHistoryLimit() {
+    override suspend fun enforceChatHistoryLimit() {
         val limit = getChatHistoryLimit()
         if (limit <= 0) return // -1 means unlimited
 

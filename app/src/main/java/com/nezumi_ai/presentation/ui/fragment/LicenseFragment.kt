@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
+import com.nezumi_ai.presentation.ui.model.LicenseItem
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 

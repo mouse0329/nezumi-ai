@@ -20,7 +20,7 @@ WindowsとmacOSのデスクトップ版で、現在のAndroid版が提供して�
 - Windows 11以降
 - macOS 14以降、Apple Siliconを第一対象
 
-最終的には、Android版と同じ共通KMPロジックを使いながら、デスクトップ固有のUI・ファイル・プロセス・GPU・VRAM・音声・権限処理をデスクトップ実装へ置き換えます。
+この設計は、Android版とデスクトップ版でUIの構成・操作・共通ロジックを共有することを目的とします。Android版のUIと共通KMPロジックを基本的にそのまま流用し、デスクトップ固有のファイル・プロセス・GPU・VRAM・音声・権限処理と、必要最小限のUI差分だけをパッチとして追加します。
 
 画像生成のバックエンドはプラットフォームで分けます。モバイルは既存のMNN/Nezumi Kiln系を維持し、デスクトップはStable Diffusion.cppを標準バックエンドにします。デスクトップのローカルLLMはllama.cppを使い、WindowsではCUDA対応GPUを第一優先として、CUDA/VRAMの状態を確認・制御できるUIを追加します。
 
@@ -49,16 +49,17 @@ WindowsとmacOSのデスクトップ版で、現在のAndroid版が提供して�
 
 ## 1. 重要な方針
 
-### 1.1 Android UIをそのままデスクトップへ移植しない
+### 1.1 AndroidとデスクトップでUIを共有し、固有部分だけをパッチする
 
-Android版はFragment、RecyclerView、Android resource、Intent、ActivityResult、Android Viewに結合しています。これらをデスクトップへ直接移植するのではなく、次の3層へ分離します。
+Android版とデスクトップ版は、画面構成、状態遷移、表示コンポーネント、操作感を基本的に共有します。Android固有APIに依存する箇所だけを、既存の共通インターフェースまたはデスクトップ実装へ差し替え、デスクトップ特有の操作やウィンドウ挙動はパッチとして追加します。大規模な再設計や別UIの作り直しは行いません。
 
 ```text
 commonMain
   ドメインモデル / UseCase / Repository interface / State / Parser / Protocol
 
 composeApp
-  Compose Multiplatform画面 / ナビゲーション / 表示コンポーネント / Desktop UI
+  Android UIを基本流用したCompose Multiplatform画面 / ナビゲーション / 表示コンポーネント
+  デスクトップ固有のUI差分パッチ
 
 platformMain
   ファイル / DB / Clipboard / Window / Process / Audio / GPU / Secure storage
@@ -72,9 +73,9 @@ platformMain
 
 まずクラウドチャットと共通UIを完成させ、その後にローカルGGUF、画像生成、音声合成を接続します。これにより、C++/JNIの遅延でデスクトップUI開発全体が止まらないようにします。
 
-### 1.4 Androidと完全同一ではなく、デスクトップに合わせて再設計する
+### 1.4 Android UIを維持し、必要なデスクトップ差分だけを置き換える
 
-次のAndroid概念はデスクトップでは置き換えます。
+Android UIの構造と操作感は維持し、Android専用APIに結合した部分だけをデスクトップ向けに置き換えます。
 
 | Android | Desktop |
 |---|---|
@@ -188,7 +189,7 @@ platformMain
 :iosApp       iOS SwiftUIアプリ
 ```
 
-将来的にAndroid/iOS/DesktopでUIまで共有する場合は、UIを次のように整理します。
+Android/iOS/DesktopでUIまで共有するため、UIは次のように整理します。
 
 ```text
 shared/src/commonMain/.../domain
