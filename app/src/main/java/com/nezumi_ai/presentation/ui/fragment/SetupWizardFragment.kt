@@ -1129,8 +1129,7 @@ class SetupWizardFragment : Fragment() {
 
     private fun navigateToChat(sessionId: Long) {
         findNavController().navigate(
-            R.id.chatFragment,
-            Bundle().apply { putLong("sessionId", sessionId) },
+            com.nezumi_ai.presentation.navigation.AppRoute.ChatSession(sessionId),
             navOptions {
                 popUpTo(R.id.setupWizardFragment) {
                     inclusive = true

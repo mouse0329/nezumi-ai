@@ -7,7 +7,6 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization") version "2.3.20"
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.20"
     alias(libs.plugins.ksp)
-    id("androidx.navigation.safeargs.kotlin") version "2.9.8"
     // Chaquopy 17.0.0: AGP 9.0-9.2 に対応した最初のバージョン (#1096)。
     // 16.1.0 は AGP 8.13 までしか対応しておらず、AGP 9.1 との組み合わせで
     // 「Unable to load class 'org.gradle.util.VersionNumber'」エラー

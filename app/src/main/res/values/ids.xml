@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="nav_host_fragment_content_main" type="id" />
+    <item name="setupWizardFragment" type="id" />
+    <item name="settingsFragment" type="id" />
+    <item name="sessionListFragment" type="id" />
+    <item name="licenseFragment" type="id" />
+    <item name="helpFragment" type="id" />
+    <item name="chatFragment" type="id" />
+    <item name="modelSettingsFragment" type="id" />
+    <item name="modelManagementFragment" type="id" />
+    <item name="presetSettingsFragment" type="id" />
+    <item name="imageGenFragment" type="id" />
+    <item name="logsFragment" type="id" />
+    <item name="miniAppManagerFragment" type="id" />
+    <item name="miniAppRunnerFragment" type="id" />
 </resources>

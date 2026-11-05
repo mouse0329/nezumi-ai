@@ -181,8 +181,7 @@ class ImageGenFragment : Fragment() {
                 val navigateToSettings: () -> Unit = {
                     runCatching {
                         findNavController().navigate(
-                            R.id.settingsFragment,
-                            android.os.Bundle().apply { putInt("startSection", 2) }
+                            com.nezumi_ai.presentation.navigation.AppRoute.Settings(startSection = 2)
                         )
                     }
                 }

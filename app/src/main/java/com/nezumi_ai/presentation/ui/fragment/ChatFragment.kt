@@ -104,7 +104,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.navigation.fragment.findNavController
-import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
@@ -215,7 +214,10 @@ class ChatFragment : Fragment() {
 
     private lateinit var viewModel: ChatViewModel
     private lateinit var adapter: MessageAdapter
-    private val args: ChatFragmentArgs by navArgs()
+    private val navigationSessionId: Long
+        get() = arguments?.getLong("sessionId", -1L) ?: -1L
+    private val navigationIsIncognito: Boolean
+        get() = arguments?.getBoolean("isIncognito", false) ?: false
     private var modelOptions: List<ModelOption> = emptyList()
     private var responseTypingAnimationJob: Job? = null
     private lateinit var settingsRepository: SettingsRepository
@@ -1217,7 +1219,7 @@ class ChatFragment : Fragment() {
         }
 
         // セッションID取得（Navigation argsから、またはSettingsから）
-        val sessionId = args.sessionId
+        val sessionId = navigationSessionId
         if (sessionId <= 0) {
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 try {
@@ -1257,7 +1259,7 @@ class ChatFragment : Fragment() {
         } else {
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    if (!args.isIncognito) {
+                    if (!navigationIsIncognito) {
                         settingsRepository.saveCurrentSessionId(sessionId)
                         // SharedPreferencesにも保存（SessionListFragmentで参照）
                         val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)

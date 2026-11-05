@@ -80,8 +80,7 @@ class MiniAppManagerFragment : Fragment() {
                 MiniAppManagerScreen(
                     onOpenApp = { appId ->
                         findNavController().navigate(
-                            R.id.action_miniAppManagerFragment_to_miniAppRunnerFragment,
-                            Bundle().apply { putString("appId", appId) }
+                            com.nezumi_ai.presentation.navigation.AppRoute.MiniAppRunner(appId)
                         )
                     },
                     onBack = { findNavController().popBackStack() }

@@ -889,7 +889,9 @@ class SettingsComposeFragment : Fragment() {
                 onDismiss = { aboutDialogVisible = false },
                 onOpenLicenses = {
                     aboutDialogVisible = false
-                    findNavController().navigate(R.id.action_settingsFragment_to_licenseFragment)
+                    findNavController().navigate(
+                        com.nezumi_ai.presentation.navigation.AppRoute.License
+                    )
                 }
             )
         }
@@ -1798,14 +1800,24 @@ class SettingsComposeFragment : Fragment() {
                     }
                     TextButton(onClick = {
                         PreferencesHelper.resetInitialSetupCompleted(requireContext())
-                        findNavController().navigate(R.id.setupWizardFragment)
+                        findNavController().navigate(
+                            com.nezumi_ai.presentation.navigation.AppRoute.Setup
+                        )
                     }) {
                         Text(text = stringResource(id = R.string.settings_inference_setup_open))
                     }
-                    TextButton(onClick = { findNavController().navigate(R.id.action_settingsFragment_to_helpFragment) }) {
+                    TextButton(onClick = {
+                        findNavController().navigate(
+                            com.nezumi_ai.presentation.navigation.AppRoute.Help
+                        )
+                    }) {
                         Text(text = stringResource(id = R.string.open_help_page))
                     }
-                    TextButton(onClick = { findNavController().navigate(R.id.action_settingsFragment_to_licenseFragment) }) {
+                    TextButton(onClick = {
+                        findNavController().navigate(
+                            com.nezumi_ai.presentation.navigation.AppRoute.License
+                        )
+                    }) {
                         Text(text = stringResource(id = R.string.open_license_page))
                     }
                 }

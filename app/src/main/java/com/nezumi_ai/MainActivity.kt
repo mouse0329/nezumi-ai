@@ -73,6 +73,9 @@ import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.export.SessionExportWriter
 import com.nezumi_ai.presentation.ui.theme.NezumiComposeTheme
+import com.nezumi_ai.presentation.navigation.AppRoute
+import com.nezumi_ai.presentation.navigation.navigate
+import com.nezumi_ai.presentation.navigation.createAppGraph
 import com.nezumi_ai.utils.CrashLogDialog
 import com.nezumi_ai.utils.LocaleHelper
 import com.nezumi_ai.data.model.sessionDateLabel
@@ -240,7 +243,7 @@ class MainActivity : AppCompatActivity() {
                         withNavController { navController ->
                             if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
                                 Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
-                                navController.navigate(R.id.setupWizardFragment)
+                                navController.navigate(AppRoute.Setup)
                             } else {
                                 ensureCurrentSessionExists()
                             }
@@ -420,12 +423,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         runCatching {
-            val navHost = androidx.navigation.fragment.NavHostFragment.create(R.navigation.nav_graph)
+            val navHost = androidx.navigation.fragment.NavHostFragment()
             fragmentManager.beginTransaction()
                 .replace(R.id.nav_host_fragment_content_main, navHost)
                 .setPrimaryNavigationFragment(navHost)
                 .commitNow()
 
+            navHost.navController.graph = navHost.navController.createAppGraph()
             navHost.navController.addOnDestinationChangedListener { _, destination, _ ->
                 drawerEnabledByNav = destination.id == R.id.chatFragment
             }
@@ -522,7 +526,12 @@ class MainActivity : AppCompatActivity() {
                                 putLong("scrollToMessageId", messageId)
                             }
                             withNavController { navController ->
-                                navController.navigate(R.id.chatFragment, bundle)
+                                navController.navigate(
+                                    AppRoute.ChatSession(
+                                        sessionId = sessionId,
+                                        scrollToMessageId = messageId,
+                                    )
+                                )
                             }
                             (window.decorView as? android.view.ViewGroup)?.removeView(this)
                         },
@@ -699,11 +708,7 @@ class MainActivity : AppCompatActivity() {
             navController.popBackStack(R.id.chatFragment, true)
         }
         navController.navigate(
-            R.id.chatFragment,
-            Bundle().apply {
-                putLong("sessionId", sessionId)
-                putBoolean("isIncognito", false)
-            },
+            AppRoute.ChatSession(sessionId = sessionId),
             navOptions {
                 launchSingleTop = true
             }
@@ -1249,11 +1254,7 @@ class MainActivity : AppCompatActivity() {
                         navController.popBackStack(R.id.chatFragment, true)
                     }
                     navController.navigate(
-                        R.id.chatFragment,
-                        Bundle().apply {
-                            putLong("sessionId", sessionId)
-                            putBoolean("isIncognito", true)
-                        },
+                        AppRoute.ChatSession(sessionId = sessionId, isIncognito = true),
                         navOptions { launchSingleTop = true }
                     )
                 }
@@ -1273,7 +1274,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("設定画面へ") { _, _ ->
                 withNavController { navController ->
                     if (navController.currentDestination?.id != R.id.settingsFragment) {
-                        navController.navigate(R.id.settingsFragment)
+                        navController.navigate(AppRoute.Settings())
                     }
                 }
             }

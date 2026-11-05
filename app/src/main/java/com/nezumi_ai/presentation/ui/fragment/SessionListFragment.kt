@@ -121,21 +121,18 @@ class SessionListFragment : Fragment() {
     }
 
     private fun navigateToChat(sessionId: Long) {
-        val action = SessionListFragmentDirections.actionSessionListFragmentToChatFragment(sessionId)
-        findNavController().navigate(action)
+        findNavController().navigate(
+            com.nezumi_ai.presentation.navigation.AppRoute.ChatSession(sessionId)
+        )
     }
 
     private fun navigateToChatWithScroll(sessionId: Long, messageId: Long) {
-        val action = SessionListFragmentDirections
-            .actionSessionListFragmentToChatFragment(sessionId)
-            .also {
-                // scrollToMessageId はDirectionsの引数として渡す
-            }
-        val bundle = android.os.Bundle().apply {
-            putLong("sessionId", sessionId)
-            putLong("scrollToMessageId", messageId)
-        }
-        findNavController().navigate(R.id.chatFragment, bundle)
+        findNavController().navigate(
+            com.nezumi_ai.presentation.navigation.AppRoute.ChatSession(
+                sessionId = sessionId,
+                scrollToMessageId = messageId,
+            )
+        )
     }
 
     private fun confirmDeleteSession(sessionId: Long) {
