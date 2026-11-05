@@ -22,6 +22,12 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>チャットに画像を添付するためにカメラを使用します。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>音声メッセージの録音と読み上げ確認にマイクを使用します。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>チャットに画像を添付するために写真ライブラリを使用します。</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

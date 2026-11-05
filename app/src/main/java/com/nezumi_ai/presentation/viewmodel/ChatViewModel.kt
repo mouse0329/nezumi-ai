@@ -84,7 +84,6 @@ import com.nezumi_ai.presentation.viewmodel.usecase.MemoryInjectionCoordinator
 import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.sd.SdScheduler
-import com.nezumi_ai.sd.SdModelLayout
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -1824,7 +1823,7 @@ class ChatViewModel(
                 )
 
                 // セッションの lastUpdated を更新
-                sessionRepository.updateSessionLastUpdated(sessionId)
+                chatSessionCoordinator.touchSession(sessionId)
 
                 // セッション名を送信直後に反映
                 maybeUpdateSessionTitleFromUserMessage(sessionId, userMessage)
@@ -2060,7 +2059,7 @@ class ChatViewModel(
                 withContext(Dispatchers.IO) {
                     runCatching { requireModelManager().clearKvCache() }
                         .onFailure { Log.w(TAG, "clearKvCache after regenerate failed", it) }
-                    sessionRepository.updateSessionLastUpdated(sessionId)
+                    chatSessionCoordinator.touchSession(sessionId)
                 }
 
                 // 新しいバリアントの作成は generateAIResponse の streamingMessageId 作成後に行う。
@@ -2171,7 +2170,7 @@ class ChatViewModel(
         }
         runCatching { requireModelManager().clearKvCache() }
             .onFailure { Log.w(TAG, "clearKvCache after revoke failed", it) }
-        sessionRepository.updateSessionLastUpdated(sessionId)
+        chatSessionCoordinator.touchSession(sessionId)
         _uiMessage.emit(if (deleteMediaFiles) appContext.getString(R.string.vm_prompt_undone) else appContext.getString(R.string.vm_message_editing))
     }
 
@@ -2269,50 +2268,12 @@ class ChatViewModel(
 
     private fun findAvailableSdModelPath(): String = imageToolInvoker.defaultSdModelPath()
 
-    private fun isProbableSdModelDir(file: File): Boolean {
-        return SdModelLayout.isUsableModelDir(file) || SdModelLayout.isLegacyQnnDir(file)
-    }
-
     /**
      * モデル名（ディレクトリ名）から SD モデルパスを解決する。
      * list_sd_models ツールが返す "name" フィールドと一致するディレクトリを探す。
      */
     private fun resolveSdModelPathByName(modelName: String): String? =
         imageToolInvoker.resolveSdModelPathByName(modelName)
-
-    private fun resolveNestedSdModelDirForName(dir: File): File {
-        var current = dir
-        repeat(3) {
-            val children = current.listFiles()?.toList() ?: return current
-            if (children.size == 1 && children[0].isDirectory) current = children[0]
-            else return current
-        }
-        return current
-    }
-
-    /**
-     * findAvailableSdModelPath / resolveSdModelPathByName と同じ 3 箇所 (sd_models / appDir /
-     * imported) を走査し、確認ダイアログのモデル選択に使う「ディレクトリ名 (表示名) のリスト」を返す。
-     * 実ファイルスキャンなので呼び出しはダイアログ表示前の 1 回のみに留める。
-     */
-    private fun listAvailableSdModelNames(): List<String> {
-        val names = mutableListOf<String>()
-        val sdModelsDir = File(appContext.filesDir, "sd_models")
-        sdModelsDir.listFiles()?.forEach { dir ->
-            if (!dir.isDirectory) return@forEach
-            val targetDir = resolveNestedSdModelDirForName(dir)
-            if (isProbableSdModelDir(targetDir)) names.add(targetDir.name)
-        }
-        val appDir = appContext.getExternalFilesDir(null)
-        appDir?.listFiles()?.forEach { file ->
-            if (isProbableSdModelDir(file)) names.add(file.name)
-        }
-        val importedDir = File(appContext.filesDir, "models/imported")
-        importedDir.listFiles()?.forEach { file ->
-            if (isProbableSdModelDir(file)) names.add(file.name)
-        }
-        return names.distinct()
-    }
 
     /**
      * 画像生成ツール呼び出し時に、ユーザーへ確認ダイアログを表示して応答を待つ。
@@ -2334,7 +2295,7 @@ class ChatViewModel(
                     imageGenConfirmCont = cont
                     _confirmationRequest.value = ImageGenConfirmationRequest(
                         prompt = initialPrompt,
-                        availableModels = runCatching { listAvailableSdModelNames() }.getOrDefault(emptyList()),
+                        availableModels = runCatching { imageToolInvoker.listAvailableSdModelNames() }.getOrDefault(emptyList()),
                         defaultModelName = defaultModelName,
                         defaultSteps = defaultSteps
                     )
@@ -4391,7 +4352,7 @@ class ChatViewModel(
                         imageDescription = imageDesc,  // Phase 12: 画像説明を保存
                         audioUri = storedAudio
                     )
-                    sessionRepository.updateSessionLastUpdated(sessionId)
+                    chatSessionCoordinator.touchSession(sessionId)
                     messageId
                 }
 
@@ -4522,7 +4483,7 @@ class ChatViewModel(
 
                 val sessionId = _currentSessionId.value
                 if (sessionId != null) {
-                    sessionRepository.updateSessionLastUpdated(sessionId)
+                    chatSessionCoordinator.touchSession(sessionId)
                 }
 
                 val mediaType = when {

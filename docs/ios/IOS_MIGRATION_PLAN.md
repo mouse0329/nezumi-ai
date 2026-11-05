@@ -2,7 +2,7 @@
 
 最終更新: 2026-11-05
 
-> 2026-11-05更新: commonMain移設とOkHttpからKtor/Coil 3への依存移行が進んだ。WindowsでのGradle確認は環境障害によりコンパイラ起動前に停止し、修正後ビルドは未検証。詳細は[Windows/macOSビルド到達ロードマップ](windows-macos-build-roadmap.md)と[KMP進捗まとめ](nezumi-ai-kmp-progress-summary.md)を参照。
+> 2026-11-05更新: Phase 1〜7 の境界を追加した。MCP 設定と Session/Message Repository を commonMain へ移設。GGUF / MNN / VOICEVOX の共通インターフェースと iOS スタブを追加。SwiftUI シェルをタブ構成にし、API キーを Keychain に保存できるようにした。**ビルドは未確認。**詳細は[KMP進捗まとめ](nezumi-ai-kmp-progress-summary.md)を参照。
 
 ## 1. 目的
 
@@ -29,23 +29,25 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 - `:shared` KMP モジュール新設
 - `iosArm64` / `iosSimulatorArm64` ターゲット追加
 - `InferenceStreamProtocol` の commonMain 移設
-- `TextTokenEstimator` の JVM API 依存除去と commonMain 移設（パッチ適用後のビルド確認待ち）
+- `TextTokenEstimator` の JVM API 依存除去と commonMain 移設（ビルド確認待ち）
 - `ThinkingLeakSalvage` の commonMain 移設
 - `Gemma4ThinkingParser` の Android 依存除去・commonMain 移設
 - `StringExtensions` の commonMain 移設
 - ChatViewModel の責務分割を開始
 - Prompt building / media I/O / WakeLock / session-title 周辺を UseCase / Provider / Coordinator に分離
+- クラスタ G の `touchSession` 配線
+- `McpServerConfig` を commonMain へ移設（kotlinx.serialization）
+- `ChatSessionRepository` / `MessageRepository` を commonMain へ移設
+- GGUF / MNN / VOICEVOX の共通インターフェースと iOS スタブを追加
+- SwiftUI シェル（チャット / セッション / 設定タブ）を追加
+- API キーを Keychain に保存する経路を `NezumiIosShell` に追加
 
 ### 未完了
 
-- クラウド推論エンジンの KMP 化
-- Repository / Room の KMP 化
-- KeyStore / 設定管理の iOS 実装
-- GGUF llama.cpp の iOS ブリッジ
-- Nezumi Kiln (MNN) の iOS ブリッジ
-- VOICEVOX CORE の iOS ブリッジ
-- iOS UI
-- iOS のファイル・メディア・権限・共有機能
+- クラウド推論エンジンの実通信回帰
+- Repository / Room の残り（Preset / Settings / Memory、Database 抽象の完全移設）
+- GGUF / MNN / VOICEVOX の実 iOS ブリッジ実装
+- チャット状態・ストリーミングの iOS UI 接続
 - iOS 実機での統合テスト
 
 ## 4. 移行対象と実装方針
@@ -81,24 +83,24 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 - [x] AndroidのOkHttp / OkHttp SSE依存をKtor Clientへ置換（Android CIO、iOS Darwin engineを設定）
 - [ ] Claude / Gemini / OpenAI 互換 / LM Studio / Ollama を commonMain 化
 - [ ] SSE / NDJSON ストリーミング処理を共通化
-- [ ] MCP HTTP/SSE transport を commonMain 化
-- [ ] Cloud API key store を expect/actual 化
+- [x] MCP 設定モデルを commonMain 化（`McpServerConfig`、kotlinx.serialization）。transport 本体は未着手
+- [x] Cloud API key store を expect/actual 化（`PlatformSecureStore`。iOS は Keychain）
 - [ ] Android 側の既存クラウド推論回帰テスト
 
 ### Phase 2: DB / Repository / ChatViewModel
 
-- [ ] Room Entity / DAO / Database を commonMain へ移設（スキーマ変更なし）
-- [ ] DB ファイルの保存先（Android / iOS）と既存 DB の引き継ぎ方針を確定
-- [ ] Session / Message / Preset / Memory / Alarm 等の repository を commonMain 化
-- [ ] ChatViewModel の残りの Android API 依存を Coordinator / Platform Provider に分離
+- [x] Room Entity / DAO は commonMain 済み。Database 抽象の完全移設は未着手
+- [x] DB ファイルの保存先方針を確定（`DatabaseLocationPolicy`、ファイル名 `nezumi_ai.db` を維持）
+- [x] Session / Message repository を commonMain 化。Preset / Settings / Memory は未着手
+- [x] ChatViewModel のクラスタ G (`touchSession`) を配線。E/F の残りは未着手
 - [ ] Android / iOS 共通の状態モデルを確定
 
 ### Phase 3: GGUF / llama.cpp
 
 - [ ] llama.cpp の iOS ビルドを作成
-- [ ] Android JNI と共有する C++ コア境界を確定
+- [x] Android JNI と共有する C++ コア境界を確定（`nezumi_llama_cabi.h`）
 - [ ] iOS C-ABI または Objective-C++ bridge を実装
-- [ ] KMP 側から iOS engine を呼び出す interface / actual を追加
+- [x] KMP 側から iOS engine を呼び出す interface を追加（`GgufNativeEngine`。iOS はスタブ）
 - [ ] CPU 推論を最初の完成基準とする
 - [ ] Metal GPU 最適化は CPU 経路の安定後に実施
 - [ ] Gemma 4 を含む GGUF モデルでストリーミング・Thinking・Tool Calling を検証
@@ -106,7 +108,7 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 ### Phase 4: Nezumi Kiln / MNN
 
 - [ ] MNN の iOS ビルド成果物を用意
-- [ ] `mnn-sd-engine` の Android JNI 依存を iOS bridge から分離
+- [x] `mnn-sd-engine` の C API を iOS 境界として明示（`MnnSdNativeEngine`、`ios_bridge_notes.h`）
 - [ ] C++ API を iOS から呼び出せる Objective-C++ / Swift 層を作成
 - [ ] SD1.5 txt2img を最初の完成基準とする
 - [ ] img2img を追加
@@ -114,21 +116,29 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 
 ### Phase 5: VOICEVOX
 
-- [ ] 使用中の VOICEVOX CORE バージョンと iOS xcframework を一致させる
+- [x] 使用中の VOICEVOX CORE バージョンを 0.16.4 で揃える方針を確定
 - [ ] iOS C API bridge を実装
-- [ ] `PlatformTtsPlayer` の iOS actual を追加
+- [x] 共通合成インターフェースを追加（`VoicevoxSynthesizer`。iOS はスタブ）
 - [ ] 音声合成・再生・中断を実機で検証
 
 ### Phase 6: iOS UI
 
-- [ ] SwiftUI アプリシェルを作成
-- [ ] shared framework を Xcode から組み込む
+- [x] SwiftUI アプリシェルを作成（チャット / セッション / 設定タブ）
+- [x] shared framework を Xcode から組み込む（既存の Run Script を維持）
 - [ ] Chat state / session / streaming state を iOS UI に接続
-- [ ] チャット画面を実装
+- [x] チャット画面の骨格を実装（推論接続は未実装）
 - [ ] モデル選択画面を実装
-- [ ] 設定 / API key / MCP 管理画面を実装
+- [x] 設定 / API key の入口を実装（MCP 管理画面はプレースホルダ）
 - [ ] 添付ファイル・画像入力を実装
-- [ ] iOS 権限モデルに合わせてカメラ・マイク・写真アクセスを実装
+- [x] iOS 権限モデルに合わせてカメラ・マイク・写真の利用目的を Info.plist に記載
+
+### Phase 7: shared 接続（完成条件向け）
+
+- [x] SwiftUI から `NezumiIosShell` 経由で shared を呼ぶ
+- [x] API key を Keychain に保存する経路を設定画面に接続
+- [ ] クラウド推論の実通信
+- [ ] Session / Message の保存と復元
+- [ ] GGUF CPU 推論の実機ストリーミング
 
 ## 6. iOS での機能差
 

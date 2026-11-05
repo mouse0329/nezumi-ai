@@ -22,6 +22,10 @@ class ImageToolInvoker(
     fun resolveSdModelPathByName(modelName: String): String? =
         sdModelPathResolver.resolveSdModelPathByName(modelName)
 
+    /** 確認ダイアログ用の SD モデル表示名一覧。 */
+    fun listAvailableSdModelNames(): List<String> =
+        sdModelPathResolver.listAvailableSdModelNames()
+
     /**
      * ツール引数の model 指定を実パスに正規化する。
      * 空指定はデフォルトパス、名前指定はパス解決、解決失敗時は null。

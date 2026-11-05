@@ -60,24 +60,14 @@ class McpPreferences private constructor(context: Context) {
     }
 
     private fun persist(list: List<McpServerConfig>) {
-        val arr = JSONArray()
-        list.forEach { arr.put(it.toJson()) }
-        prefs.edit().putString(KEY_SERVERS, arr.toString()).apply()
+        prefs.edit().putString(KEY_SERVERS, McpServerConfig.listToJson(list)).apply()
     }
 
     private fun loadFromPrefs(): List<McpServerConfig> {
-        val raw = prefs.getString(KEY_SERVERS, null) ?: return emptyList()
-        return runCatching {
-            val arr = JSONArray(raw)
-            buildList {
-                for (i in 0 until arr.length()) {
-                    val obj = arr.optJSONObject(i) ?: continue
-                    add(McpServerConfig.fromJson(obj))
-                }
-            }
-        }.onFailure {
-            Log.e(TAG, "Failed to load MCP server configs", it)
-        }.getOrDefault(emptyList())
+        val raw = prefs.getString(KEY_SERVERS, null)
+        return runCatching { McpServerConfig.listFromJson(raw) }
+            .onFailure { Log.e(TAG, "Failed to load MCP server configs", it) }
+            .getOrDefault(emptyList())
     }
 
     companion object {

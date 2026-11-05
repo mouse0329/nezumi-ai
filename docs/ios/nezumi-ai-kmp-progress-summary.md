@@ -2,7 +2,23 @@
 
 最終更新: 2026-11-05
 
-## 最新更新 (2026-11-05)
+## 最新更新 (2026-11-05・境界追加)
+
+- **ChatViewModel**: クラスタ G の `touchSession` を配線。SD モデル表示名一覧を `PlatformSdModelPathResolver` / `ImageToolInvoker` へ移設。
+- **Phase 1**: `McpServerConfig` / `McpTransport` / `McpToolDescriptor` を commonMain へ移設。`org.json` から `kotlinx.serialization` に切り替え。
+- **Phase 2**: `ChatSessionRepository` と `MessageRepository` を commonMain へ移設。履歴上限強制は `ChatHistoryLimitEnforcer` に分離。DB 保存方針を `DatabaseLocationPolicy` で明示（ファイル名 `nezumi_ai.db` を維持）。
+- **Phase 3**: GGUF の C-ABI ヘッダ (`nezumi_llama_cabi.h`) と `GgufNativeEngine` を追加。Android は `LlamaBridge` に委譲、iOS はスタブ。
+- **Phase 4**: MNN SD の共通インターフェース (`MnnSdNativeEngine`) を追加。既存 C API を iOS 境界として明示。
+- **Phase 5**: VOICEVOX の共通合成インターフェース (`VoicevoxSynthesizer`) を追加。バージョンは 0.16.4 で揃える方針。
+- **Phase 6**: SwiftUI シェルをタブ構成（チャット / セッション / 設定）に変更。カメラ・マイク・写真の利用目的を Info.plist に追加。
+- **Phase 7**: `NezumiIosShell` から Keychain へ API キーを保存する経路を設定画面に接続。
+- **ビルドは未確認。**ネイティブの実ブリッジ実装と実機検証は未着手。
+
+旧セクションの進捗は当時の記録として残す。上記と矛盾する未着手表記は、この更新を優先する。
+
+---
+
+## 旧・最新更新 (2026-11-05)
 
 - commonMainへ移設する対象を拡張し、推論設定/プロンプト、メディア・文書処理、MiniApp manifest、プリセット/Skill、Repository、テーマ/Compose部品、安全判定などを追加。Android固有の安全ログ整形はapp側に残した。
 - `LiteRtStructuredPrompt`とMiniApp manifestのJSON処理をkotlinx.serializationへ変更し、`org.json`をcommonMainから排除。共通モデル一覧からAndroid `LocalModel`型依存も除去した。
@@ -39,13 +55,13 @@ nezumi-aiをKotlin Multiplatform (KMP) 化し、Android/iOSでコード共有を
 | 領域 | 難易度 | 状態 |
 |---|---|---|
 | KMP土台 (sharedモジュール) | 低 | **完了**（iOS化の第一歩・2026-08-17） |
-| クラウド推論エンジン(Claude/Gemini/OpenAI互換等) | 低 | 共通engine実装とKtor Client移行は実施済み。Android CIO / iOS Darwin構成。プラットフォーム別コンパイル・通信回帰は未確認 |
-| ChatViewModelの責務分割 | 中 | **進行中**（詳細は下記） |
-| Repository/DB (Room) | 中 | 方針: Room をそのまま KMP 化（SQLDelight は採用しない）。未着手 |
-| GGUF (llama.cpp) | 低〜中(更新) | 未着手（コアはほぼ流用可、ブリッジのみ新規。取り込み元のllama.rnが公式iOSブリッジ実装(ios/RNLlama.mm等)を持ち参考にできる） |
-| 画像生成 (Nezumi Kiln / MNN) | 低〜中(訂正) | 未着手（当初「独自ラッパーが未実装」としていたが誤り。CMakeに汎用フォールバックが既存、コア実装のAndroid依存は最小限） |
-| VOICEVOX (TTS) | 中(訂正) | 未着手（当初「対象外」としていたが誤り。公式iOS xcframework配布あり、Kotlin側は高レベルAPIのみ使用。ただしSwift公式SDKが未整備で自前ブリッジが必要） |
-| UI (Compose Multiplatform化) | 高 | 調査済み（詳細は下記） |
+| クラウド推論エンジン(Claude/Gemini/OpenAI互換等) | 低 | 共通engine実装とKtor Client移行は実施済み。MCP設定モデルはcommonMain化。実通信回帰は未確認 |
+| ChatViewModelの責務分割 | 中 | **進行中**（クラスタ G の touchSession 配線済み。E/F の残りは未着手） |
+| Repository/DB (Room) | 中 | Session / Message を commonMain 化。Entity / DAO は移設済み。Database 抽象と Preset / Settings / Memory は未着手 |
+| GGUF (llama.cpp) | 低〜中 | C-ABI 境界と KMP インターフェースを追加。iOS 実ブリッジは未着手 |
+| 画像生成 (Nezumi Kiln / MNN) | 低〜中 | 共通インターフェースを追加。iOS 実ブリッジは未着手 |
+| VOICEVOX (TTS) | 中 | 共通合成インターフェースを追加。バージョンは 0.16.4 で揃える方針。iOS 実ブリッジは未着手 |
+| UI (iOS SwiftUI) | 中 | シェル（タブ構成）を追加。API キーは Keychain 接続済み。推論・セッション接続は未着手 |
 
 ### KMP土台構築（sharedモジュール新設・2026-08-17 完了）
 

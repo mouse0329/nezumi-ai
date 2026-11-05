@@ -1,7 +1,9 @@
 package com.nezumi_ai.data.repository
 
+import com.nezumi_ai.data.database.currentTimeMillis
 import com.nezumi_ai.data.database.dao.MessageDao
 import com.nezumi_ai.data.database.entity.MessageEntity
+import com.nezumi_ai.data.inference.cloud.CloudLog
 import kotlinx.coroutines.flow.Flow
 
 class MessageRepository(private val dao: MessageDao) {
@@ -33,7 +35,7 @@ class MessageRepository(private val dao: MessageDao) {
             imageUri = imageUri,
             imageDescription = imageDescription,  // Phase 12: 画像説明を保存
             audioUri = audioUri,
-            timestamp = System.currentTimeMillis(),
+            timestamp = currentTimeMillis(),
             isStreaming = isStreaming,
             parentUserMessageId = parentUserMessageId,
             variantIndex = variantIndex
@@ -149,12 +151,12 @@ class MessageRepository(private val dao: MessageDao) {
         ttftMs: Long? = null
     ) {
         try {
-            android.util.Log.d(
+            CloudLog.d(
                 "MessageRepository",
                 "updateMessageContent: start messageId=$messageId isStreaming=$isStreaming contentLen=${content.length} thinkingProvided=$thinkingProvided"
             )
             val current = dao.getMessageById(messageId) ?: run {
-                android.util.Log.w("MessageRepository", "updateMessageContent: message not found messageId=$messageId")
+                CloudLog.w("MessageRepository", "updateMessageContent: message not found messageId=$messageId")
                 return
             }
  // Bug fix: 生成完了後に Thinking が消えるバグへのためのガード。
@@ -171,7 +173,7 @@ class MessageRepository(private val dao: MessageDao) {
             }
             // 生成終了時は回答完了時刻に timestamp を更新する
             val resolvedTimestamp = if (current.isStreaming && !isStreaming && current.role == "assistant") {
-                System.currentTimeMillis()
+                currentTimeMillis()
             } else {
                 current.timestamp
             }
@@ -187,9 +189,9 @@ class MessageRepository(private val dao: MessageDao) {
                     timestamp = resolvedTimestamp
                 )
             )
-            android.util.Log.d("MessageRepository", "updateMessageContent: complete messageId=$messageId")
+            CloudLog.d("MessageRepository", "updateMessageContent: complete messageId=$messageId")
         } catch (t: Throwable) {
-            android.util.Log.e("MessageRepository", "updateMessageContent: failed for messageId=$messageId", t)
+            CloudLog.e("MessageRepository", "updateMessageContent: failed for messageId=$messageId", t)
             throw t
         }
     }
@@ -269,7 +271,7 @@ class MessageRepository(private val dao: MessageDao) {
         }
         
         if (fixedCount > 0) {
-            android.util.Log.w("MessageRepository", "STARTUP_CLEANUP: Fixed $fixedCount messages with isStreaming=true -> false")
+            CloudLog.w("MessageRepository", "STARTUP_CLEANUP: Fixed $fixedCount messages with isStreaming=true -> false")
         }
         
         return fixedCount

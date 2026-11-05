@@ -366,6 +366,25 @@ class AndroidPlatformSdModelPathResolver(
         return null
     }
 
+    override fun listAvailableSdModelNames(): List<String> {
+        val names = mutableListOf<String>()
+        val sdModelsDir = File(appContext.filesDir, "sd_models")
+        sdModelsDir.listFiles()?.forEach { dir ->
+            if (!dir.isDirectory) return@forEach
+            val targetDir = resolveNestedSdModelDirForName(dir)
+            if (isProbableSdModelDir(targetDir)) names.add(targetDir.name)
+        }
+        val appDir = appContext.getExternalFilesDir(null)
+        appDir?.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) names.add(file.name)
+        }
+        val importedDir = File(appContext.filesDir, "models/imported")
+        importedDir.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) names.add(file.name)
+        }
+        return names.distinct()
+    }
+
     private fun isProbableSdModelDir(file: File): Boolean {
         return SdModelLayout.isUsableModelDir(file) || SdModelLayout.isLegacyQnnDir(file)
     }

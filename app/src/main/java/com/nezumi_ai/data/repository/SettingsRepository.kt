@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.Flow
 class SettingsRepository(
     private val dao: SettingsDao,
     private val chatSessionDao: ChatSessionDao
-) {
+) : com.nezumi_ai.data.repository.ChatHistoryLimitEnforcer {
     companion object {
         private const val BACKEND_CPU = "CPU"
         private const val BACKEND_GPU = "GPU"

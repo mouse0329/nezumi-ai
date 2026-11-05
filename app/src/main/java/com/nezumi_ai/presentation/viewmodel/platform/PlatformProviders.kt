@@ -57,4 +57,7 @@ interface PlatformKeyValueStore {
 interface PlatformSdModelPathResolver {
     fun findAvailableSdModelPath(): String
     fun resolveSdModelPathByName(modelName: String): String?
+
+    /** 確認ダイアログ用に、利用可能な SD モデルの表示名一覧を返す。 */
+    fun listAvailableSdModelNames(): List<String>
 }

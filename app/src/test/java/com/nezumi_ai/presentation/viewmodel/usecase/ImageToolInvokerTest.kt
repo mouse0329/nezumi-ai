@@ -20,6 +20,7 @@ class ImageToolInvokerTest {
             override fun findAvailableSdModelPath(): String = "/sd/default.mnn"
             override fun resolveSdModelPathByName(modelName: String): String? =
                 if (modelName == "default") "/sd/default.mnn" else null
+            override fun listAvailableSdModelNames(): List<String> = listOf("default")
         }
     )
 

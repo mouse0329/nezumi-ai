@@ -1,12 +1,14 @@
 package com.nezumi_ai.data.repository
 
+import com.nezumi_ai.data.database.currentTimeMillis
 import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
+import com.nezumi_ai.data.inference.cloud.CloudLog
 import kotlinx.coroutines.flow.Flow
 
 class ChatSessionRepository(
     private val dao: ChatSessionDao,
-    private val settingsRepository: SettingsRepository? = null,
+    private val historyLimitEnforcer: ChatHistoryLimitEnforcer? = null,
     private val messageRepository: MessageRepository? = null
 ) {
     
@@ -16,7 +18,7 @@ class ChatSessionRepository(
         dao.getSessionById(sessionId)
     
     suspend fun createSession(name: String, isIncognito: Boolean = false): Long {
-        val now = System.currentTimeMillis()
+        val now = currentTimeMillis()
         val session = ChatSessionEntity(
             name = name,
             createDate = now,
@@ -28,14 +30,14 @@ class ChatSessionRepository(
         // Bug fix: 新規セッション作成時に最大保存数を強制して古いセッションを古い順に削除させる。
         // 作成したばかりのセッションを誤って消さないよう、 incognito 以外のときだけ実行する。
         if (!isIncognito) {
-            runCatching { settingsRepository?.enforceChatHistoryLimit() }
+            runCatching { historyLimitEnforcer?.enforceChatHistoryLimit() }
         }
         return newId
     }
     
     suspend fun updateSessionLastUpdated(sessionId: Long) {
         val session = dao.getSessionById(sessionId) ?: return
-        dao.update(session.copy(lastUpdated = System.currentTimeMillis()))
+        dao.update(session.copy(lastUpdated = currentTimeMillis()))
     }
 
     /**
@@ -67,7 +69,7 @@ class ChatSessionRepository(
                 val msgs = repo.getMessagesForSessionOnce(sessionId)
                 msgs.forEach { m -> cleanupAttachments(m.imageUri, m.audioUri) }
             }.onFailure {
-                android.util.Log.w("ChatSessionRepository", "cleanupAttachments failed for session=$sessionId", it)
+                CloudLog.w("ChatSessionRepository", "cleanupAttachments failed for session=$sessionId", it)
             }
         }
         dao.deleteById(sessionId)
@@ -80,7 +82,7 @@ class ChatSessionRepository(
 
     suspend fun updateSessionName(sessionId: Long, name: String) {
         val session = dao.getSessionById(sessionId) ?: return
-        dao.update(session.copy(name = name, lastUpdated = System.currentTimeMillis()))
+        dao.update(session.copy(name = name, lastUpdated = currentTimeMillis()))
     }
 
     /** インポート用: createDate / selectedModel / isPinned などをまとめて反映する。 */
@@ -92,14 +94,14 @@ class ChatSessionRepository(
         val session = dao.getSessionById(sessionId) ?: return
         val newPinState = !session.isPinned
         dao.update(session.copy(isPinned = newPinState))
-        android.util.Log.d("ChatSessionRepository", "togglePinSession: sessionId=$sessionId isPinned=$newPinState")
+        CloudLog.d("ChatSessionRepository", "togglePinSession: sessionId=$sessionId isPinned=$newPinState")
     }
 
     suspend fun setPinSession(sessionId: Long, pinned: Boolean) {
         val session = dao.getSessionById(sessionId) ?: return
         if (session.isPinned == pinned) return
         dao.update(session.copy(isPinned = pinned))
-        android.util.Log.d("ChatSessionRepository", "setPinSession: sessionId=$sessionId isPinned=$pinned")
+        CloudLog.d("ChatSessionRepository", "setPinSession: sessionId=$sessionId isPinned=$pinned")
     }
 
     suspend fun getLatestSession(): ChatSessionEntity? {
