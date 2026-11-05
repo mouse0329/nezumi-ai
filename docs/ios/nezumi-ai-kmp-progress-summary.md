@@ -1,6 +1,17 @@
 # nezumi-ai KMP化プロジェクト 進捗まとめ
 
-最終更新: 2026-11-04
+最終更新: 2026-11-05
+
+## 最新更新 (2026-11-05)
+
+- commonMainへ移設する対象を拡張し、推論設定/プロンプト、メディア・文書処理、MiniApp manifest、プリセット/Skill、Repository、テーマ/Compose部品、安全判定などを追加。Android固有の安全ログ整形はapp側に残した。
+- `LiteRtStructuredPrompt`とMiniApp manifestのJSON処理をkotlinx.serializationへ変更し、`org.json`をcommonMainから排除。共通モデル一覧からAndroid `LocalModel`型依存も除去した。
+- Coil 3 + Ktor Clientへ移行し、OkHttp/OkHttp SSE依存を削除。AndroidはCIO、iOSはDarwin engine。
+- `ToolCallHistoryRepository`はcommonMainの`CloudToolResultCard`で既存JSON配列を読み取る。コンパイラから報告された型参照エラーと、WebSearch/MCPの3件のKotlinエラーは修正済み。
+- **ビルドは未確認。**Windows Gradle Wrapperは`%USERPROFILE%\\.gradle`のlockファイルアクセス拒否で起動できず、リポジトリ内Gradle user homeからGradle 9.3.1を直接起動した試行もdaemon接続エラーで終了した。修正後コンパイルは成功扱いにせず、WindowsでM1/M2を再実行する。
+- VOICEVOX Engineはライセンス上採用せず、VOICEVOX CORE APIを直接使う方針に限定。CORE 0.17.1のDesktop Java artifactsとiOS/macOS XCFrameworkアーカイブを取得済みだが、KMP targetへの接続・実機検証は未着手。現在のAndroidアプリ依存は0.16.4。
+
+旧セクションの進捗は当時の記録として残す。上記と矛盾するビルド成功/未着手表記は、2026-11-05時点の状態を優先する。
 
 ---
 
@@ -28,7 +39,7 @@ nezumi-aiをKotlin Multiplatform (KMP) 化し、Android/iOSでコード共有を
 | 領域 | 難易度 | 状態 |
 |---|---|---|
 | KMP土台 (sharedモジュール) | 低 | **完了**（iOS化の第一歩・2026-08-17） |
-| クラウド推論エンジン(Claude/Gemini/OpenAI互換等) | 低 | エンジン実装は `shared/.../cloud/engine/` に commonMain 配置済み。残りは警告整理と OkHttp→Ktor の確認 |
+| クラウド推論エンジン(Claude/Gemini/OpenAI互換等) | 低 | 共通engine実装とKtor Client移行は実施済み。Android CIO / iOS Darwin構成。プラットフォーム別コンパイル・通信回帰は未確認 |
 | ChatViewModelの責務分割 | 中 | **進行中**（詳細は下記） |
 | Repository/DB (Room) | 中 | 方針: Room をそのまま KMP 化（SQLDelight は採用しない）。未着手 |
 | GGUF (llama.cpp) | 低〜中(更新) | 未着手（コアはほぼ流用可、ブリッジのみ新規。取り込み元のllama.rnが公式iOSブリッジ実装(ios/RNLlama.mm等)を持ち参考にできる） |
@@ -145,18 +156,19 @@ iOS 化の最初の成果物として、AGP 9 + Kotlin 2.3.20 の新構成に対
 
 ## 5. 未着手・今後の論点
 
-- KMP土台（sharedモジュール）は完成。プロンプト構築・パーサ系の純粋ロジック4本を commonMain へ移設済み
-- クラウド推論エンジン層: エンジン本体は commonMain 配置済み。警告整理と OkHttp→Ktor の状態確認が残り
+- commonMain移設対象は拡張済み。現時点でコンパイル成功は未確認のため、Windows環境を整えて`:shared:compileAndroidMain`と`:app:compileDebugKotlin`を再実行する
+- クラウド推論: Ktor依存への置換と一部共通層移行は実施済み。Claude/Gemini/OpenAI互換等の全エンジンをcommonMainへ揃える作業と通信回帰確認は残る
 - Room の KMP 化: DB は Room のまま。Entity / DAO / Database を commonMain へ移し、DB ビルダーのみ expect/actual で分ける（スキーマ変更なし）
 - UI面のFragment撤去（設計は完了、実装は未着手）
 - ChatViewModel分割の残り（クラスタDは廃止。E/F本格着手、クラスタGの`touchSession`確認とビルド確認）
 - GGUF/MNN/LiteRT-LMの実際のiOSブリッジ実装 — 今回の再評価で「やりやすそう」と判明したが、まだコードは書かれていない
+- VOICEVOX COREのKMP/iOS/Desktop接続。VOICEVOX Engineは採用しない。CORE配布物と音声モデルのライセンス条件を個別に確認する
 
 ### 次の一手候補
 
-1. **新設した`:shared`モジュールのビルド確認**（`./gradlew :shared:compileKotlinIosArm64` など）と app 側の回帰確認（`./gradlew assembleDebug`）
-2. `TextTokenEstimator` の commonMain 移設をビルド確認し、コミットする
-3. クラスタGの`touchSession`未配線の扱い確定 + Windowsビルド確認
+1. Windows Gradle環境のロック/daemon問題を解決し、`:shared:compileAndroidMain`と`:app:compileDebugKotlin`を実行
+2. macOSで`:shared:compileKotlinIosSimulatorArm64`と`:shared:compileKotlinIosArm64`を実行
+3. クラスタGの`touchSession`未配線の扱いを確定
 4. クラスタE/F(モデル管理・画像生成ツール)の続きに着手
 5. 評価が好転したGGUF/MNN/LiteRT-LMについて、実際にiOS向けブリッジのプロトタイプ着手を検討
 6. UI面(Fragment撤去)に着手

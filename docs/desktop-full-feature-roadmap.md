@@ -1,6 +1,14 @@
 # nezumi-ai デスクトップ完全機能化ロードマップ
 
-更新日: 2026-11-04
+更新日: 2026-11-05
+
+## 進捗スナップショット (2026-11-05)
+
+- `:shared`にAndroid/iOSターゲットがあり、Androidアプリから共通化候補のデータモデル、パーサ、Repository、Compose部品をcommonMainへ移設した。共通コードからAndroid/JVM APIへの直接参照を除き、必要な機種依存処理は既存のplatform実装に寄せている。
+- Coil 3とKtor Clientへ移行し、OkHttp依存を削除した。AndroidはCIO、iOSはDarwin engineを使う構成。
+- Windows/macOS/Linux向けVOICEVOX CORE 0.17.1 Java artifactsとiOS/macOS XCFrameworkアーカイブをリポジトリに配置した。これはSDK素材の確保までであり、Desktop targetへの組み込み・実行確認は未完了。
+- **VOICEVOX Engineはライセンス上の理由で対象外。VOICEVOX COREをアプリから直接利用する構成に限定する。**各COREバイナリの配布条件、辞書/モデル等の同梱条件も、実装・配布前に個別確認する。
+- 最新のWindows Gradle確認は環境側のロックファイル権限拒否およびGradle daemon接続失敗でコンパイラ起動前に停止した。Kotlinエラー4点は修正済みだが、修正後のcompile成功は確認できていない。Desktop開発着手前にWindowsのM1/M2ゲートを再実行する。
 
 ## 0. ゴール
 
@@ -91,7 +99,7 @@ platformMain
 - `iosArm64` / `iosSimulatorArm64` target
 - commonMainへ移行済みのドメイン・パーサ・プロトコル
 - Compose Multiplatform依存
-- Android側でコンパイル済みの共通UI部品
+- commonMainへ移設済みの共通UI部品（この更新時点でコンパイル未検証）
 - SwiftUIの最小iOSシェル
 
 ### まだ必要なもの
@@ -135,7 +143,7 @@ platformMain
 - プリセット
 - 画像生成
 - 画像ギャラリー
-- Voicevox
+- VOICEVOX CORE直接連携（VOICEVOX Engineは使わない）
 - ファイル保存・エクスポート
 - 文書変換
 

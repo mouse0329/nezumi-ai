@@ -1,6 +1,8 @@
 # nezumi-ai Windows / macOS ビルド到達ロードマップ
 
-更新日: 2026-11-04
+更新日: 2026-11-05
+
+> **最新の検証状況 (2026-11-05):** `:shared:compileAndroidMain` と `:app:compileDebugKotlin` はこの更新時点で成功確認できていない。Windows上でGradle Wrapperはユーザー領域の`.zip.lck`へのアクセス拒否で停止し、既存Gradle 9.3.1を直接実行した場合もデーモン接続に失敗した。コンパイラ起動前の環境ブロッカーとして扱い、M1/M2は成功ログを得るまで未達とする。Kotlinエラーとして報告されたToolResultCard参照、WebSearchのreturn、Ktor Acceptヘッダー、`isSuccess` importは修正済みだが、修正後の再コンパイルは未確認。
 
 ## 0. 目的と前提
 
@@ -36,12 +38,13 @@ C++/NDKは別フェーズに分離し、まずKMP共有層とUIのコンパイ�
   - `iosSimulatorArm64`
 - `iosApp`: SwiftUIの最小シェル。`shared.framework`をXcodeから組み込む構成
 
-### 現在確認できていること
+### 実装済み（この更新時点でビルド未検証）
 
-- JDK 21、Gradle 9.3.1で動作
-- `:shared:compileAndroidMain` 成功
-- `:app:compileDebugKotlin` 成功
+- JDK 21、Gradle 9.3.1を設定
+- `gradle.properties`からWindows固有のJDK絶対パスを除去
 - Compose Multiplatform依存を`shared/commonMain`へ追加済み
+- Android側から共通化候補のドメイン、パーサ、Repository、UI部品をcommonMainへ移設済み
+- Ktor CIO / Darwin engineを各プラットフォーム用に設定。OkHttp engine依存を除去
 - Android側から移行した共通UI:
   - `MarkdownText`
   - `StatusBarSpacer`
@@ -50,10 +53,10 @@ C++/NDKは別フェーズに分離し、まずKMP共有層とUIのコンパイ�
   - `ThemeModeSpec`
 - Android側の元ファイルは移行済みのものについて削除済み
 
-### 現在のビルド阻害要因
+### 現在のビルド阻害要因と検証待ち
 
-1. Androidアプリの完全ビルドはChaquopyがPython 3.13を要求する
-2. 現在のSandboxにはPython 3.12しかない
+1. この実行環境ではGradle Wrapperのユーザー領域ロックにアクセスできず、直接起動したGradleもデーモン接続に失敗する。コードのコンパイル結果は未取得
+2. Androidアプリの完全ビルドはChaquopyがPython 3.13を要求する
 3. `app`はCMake/NDKを構成上参照するため、完全なAPKビルドにはネイティブ環境が必要
 4. macOS側のiOSフレームワーク生成は未確認
 5. `shared`はRoom KMP、Ktor Darwin、Compose Multiplatformなど複数のiOS依存を持つため、macOSで実ターゲットの解決確認が必要
@@ -273,7 +276,7 @@ macOSコンパイルで問題が出た場合は、次の順で対応します。
 ### 6.3 Ktor
 
 - `commonMain`: `ktor-client-core`
-- `androidMain`: OkHttp engine
+- `androidMain`: CIO engine
 - `iosMain`: Darwin engine
 - OpenAI互換など1プロバイダーのGET/POST/streamingから確認
 

@@ -1,6 +1,8 @@
 # nezumi-ai iOS 移行計画
 
-最終更新: 2026-08-24
+最終更新: 2026-11-05
+
+> 2026-11-05更新: commonMain移設とOkHttpからKtor/Coil 3への依存移行が進んだ。WindowsでのGradle確認は環境障害によりコンパイラ起動前に停止し、修正後ビルドは未検証。詳細は[Windows/macOSビルド到達ロードマップ](windows-macos-build-roadmap.md)と[KMP進捗まとめ](nezumi-ai-kmp-progress-summary.md)を参照。
 
 ## 1. 目的
 
@@ -52,7 +54,7 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 |---|---|---|---|
 | ドメインモデル / DTO | Kotlin | commonMain | P0 |
 | Prompt / Parser | Kotlin | commonMain | P0 |
-| クラウド推論 | OkHttp | Ktor Client + commonMain | P0 |
+| クラウド推論 | Ktor Client (Android CIO / iOS Darwin) | commonMain共有を拡張中 | P0 |
 | MCP | Android/Kotlin | Ktor + commonMain、iOS transport を追加 | P1 |
 | ChatViewModel | Android Framework 依存 | Coordinator / UseCase / State を commonMain 化 | P0 |
 | DB | Room | Room（KMP 対応版） | P0 |
@@ -61,7 +63,7 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 | GGUF | llama.cpp + JNI | llama.cpp + C-ABI/ObjC++/Swift bridge | P0 |
 | MNN / Nezumi Kiln | C++ + JNI | C++ + ObjC++/Swift bridge | P1 |
 | LiteRT-LM / QNN | Android NPU | iOS では初期対象外。GGUF 経路を優先 | P2 |
-| VOICEVOX | Android AAR | iOS xcframework + bridge | P2 |
+| VOICEVOX CORE | Android AAR | CORE APIを直接呼び出すiOS xcframework bridge（VOICEVOX Engineはライセンス上対象外） | P2 |
 | UI | Compose / Android | SwiftUI を第一候補 | P0 |
 | ドキュメント変換 | Apache POI / PDFBox | iOS/KMP 対応ライブラリを再選定 | P2 |
 
@@ -76,7 +78,7 @@ nezumi-ai の Android 版を維持しながら、iOS 版を段階的に実装す
 
 ### Phase 1: クラウド・ドメイン層
 
-- [ ] OkHttp 依存を Ktor Client に置換
+- [x] AndroidのOkHttp / OkHttp SSE依存をKtor Clientへ置換（Android CIO、iOS Darwin engineを設定）
 - [ ] Claude / Gemini / OpenAI 互換 / LM Studio / Ollama を commonMain 化
 - [ ] SSE / NDJSON ストリーミング処理を共通化
 - [ ] MCP HTTP/SSE transport を commonMain 化
