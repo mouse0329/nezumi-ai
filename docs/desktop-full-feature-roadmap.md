@@ -10,6 +10,7 @@
 - **VOICEVOX Engineはライセンス上の理由で対象外。VOICEVOX COREをアプリから直接利用する構成に限定する。**各COREバイナリの配布条件、辞書/モデル等の同梱条件も、実装・配布前に個別確認する。
 - 最新のWindows Gradle確認は環境側のロックファイル権限拒否およびGradle daemon接続失敗でコンパイラ起動前に停止した。Kotlinエラー4点は修正済みだが、修正後のcompile成功は確認できていない。Desktop開発着手前にWindowsのM1/M2ゲートを再実行する。
 - `:desktopApp`を追加し、Compose DesktopのJVM起動シェルと`:shared`のDesktop JVMターゲットを定義した。D0/D1の最小構成として、まずWindows向けコンパイルと起動確認を行う。
+- LiteRT-LMはDesktopの対象外とする。Desktopのローカル推論はGGUF/llama.cppを使用し、LiteRT-LMの共通プロトコル・モデル定義は将来のiOS対応のため`:shared`に保持する。
 
 ## 0. ゴール
 
@@ -46,6 +47,8 @@ WindowsとmacOSのデスクトップ版で、現在のAndroid版が提供して�
 - ミニアプリ機能
 - テーマ・表示設定
 - Windows/macOSのファイル・クリップボード・通知連携
+
+LiteRT-LMはAndroidで利用しているが、Desktop（Windows/macOS）へは移植しない。iOSでは将来のローカル推論バックエンド候補として対応する。
 
 ## 1. 重要な方針
 
@@ -118,6 +121,8 @@ Android UIの構造と操作感は維持し、Android専用APIに結合した部
 - Android専用のChaquopy文書変換置き換え
 - AndroidのFragment/RecyclerView依存の除去
 
+Desktopのローカル推論バックエンドはGGUF/llama.cppに限定する。LiteRT-LMの実行ランタイムやモデル配布処理はDesktop moduleへ追加せず、iOS向けのplatform実装として別途接続する。
+
 ## 3. 機能パリティの定義
 
 ### P0: 最初のデスクトップ版に必須
@@ -160,6 +165,8 @@ Android UIの構造と操作感は維持し、Android専用APIに結合した部
 - OS共有メニュー
 - 通知・トレイ常駐
 - Windows/macOS固有の最適化
+
+LiteRT-LMはDesktopのP0/P1/P2機能パリティには含めない。Android/iOS共通化に必要な型・プロトコルのみ`commonMain`で共有し、実行機能はAndroidおよび将来のiOSに限定する。
 
 ## 4. 到達マイルストーン
 

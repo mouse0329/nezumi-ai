@@ -4,11 +4,12 @@ package com.nezumi_ai.data.inference
  * おすすめ（推奨）モデルの拡張可能なカタログ。
  *
  * - 組み込み LiteRT 系（Gemma）と HF 上の GGUF 推奨モデルを同じリストで扱う。
+ * - LiteRT 系はAndroidおよび将来のiOS用で、Desktopでは公開しない。
  * - 新しいおすすめモデルを足すときは [entries] に 1 行追加するだけでよい。
  * - UI（セットアップ / モデル管理）は LocalModel 列挙に直接依存せず、このカタログを参照する。
  *
  * エンジンの違いは [engine] で表現する:
- * - [Engine.LITERT] … 既存の .task / .litertlm（LocalModel 経由）
+ * - [Engine.LITERT] … 既存の .task / .litertlm（LocalModel 経由、Android/iOS用）
  * - [Engine.GGUF]   … llama.cpp 系。ダウンロード後は imported 扱い
  */
 object RecommendedModelCatalog {

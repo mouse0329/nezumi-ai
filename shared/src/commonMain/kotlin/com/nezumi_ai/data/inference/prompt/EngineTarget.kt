@@ -5,14 +5,15 @@ package com.nezumi_ai.data.inference.prompt
  *
  * これまで `ChatViewModel` の `isGgufEngineModel()` 分岐と
  * 「それ以外は全部 LiteRT (Gemma 固定)」という誤った二分法で決まっていた先を、
- * 明示的な 3 系統に分離する。クラウドは LiteRT と同じ構造化経路を
+ * 明示的な 3 系統に分離する。LiteRT-LMはAndroidおよび将来のiOS向けであり、
+ * Desktopでは実行対象にしない。クラウドは LiteRT と同じ構造化経路を
  * 通らず、独自レンダラー (Phase 5) へ流す。
  */
 sealed interface EngineTarget {
     /** llama.cpp 系 (ローカル .gguf)。モデル名 / パスから決まる。 */
     data class Gguf(val modelPath: String) : EngineTarget
 
-    /** LiteRT-LM 系 (.litertlm)。構造化ペイロード + thinkingConfig で制御する。 */
+    /** LiteRT-LM 系 (.litertlm)。Android/iOS用。Desktopでは実行対象にしない。 */
     data class LiteRt(val modelName: String) : EngineTarget
 
     /** クラウド (Claude / Gemini / OpenAI / LM Studio / Ollama)。 */
