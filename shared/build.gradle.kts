@@ -60,6 +60,9 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.coroutines.core)
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
         androidMain.dependencies {
             // Android の HTTP 実装に使う Ktor CIO エンジン。
             implementation(libs.ktor.client.cio)
