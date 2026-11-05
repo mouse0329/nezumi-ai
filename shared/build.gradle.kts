@@ -39,6 +39,7 @@ kotlin {
             baseName = "shared"
         }
     }
+    jvm("desktop")
 
     sourceSets {
         commonMain.dependencies {
@@ -70,6 +71,11 @@ kotlin {
             // iOS 側の Ktor エンジン。実装は後日 (フェーズ1 ではインターフェースのみ)。
             implementation(libs.ktor.client.darwin)
         }
+        val desktopMain by getting {
+            dependencies {
+                implementation(libs.ktor.client.cio)
+            }
+        }
     }
 }
 
@@ -78,4 +84,5 @@ dependencies {
     add("kspAndroid", libs.androidx.room.compiler)
     add("kspIosArm64", libs.androidx.room.compiler)
     add("kspIosSimulatorArm64", libs.androidx.room.compiler)
+    add("kspDesktop", libs.androidx.room.compiler)
 }

@@ -9,6 +9,7 @@
 - Windows/macOS/Linux向けVOICEVOX CORE 0.17.1 Java artifactsとiOS/macOS XCFrameworkアーカイブをリポジトリに配置した。これはSDK素材の確保までであり、Desktop targetへの組み込み・実行確認は未完了。
 - **VOICEVOX Engineはライセンス上の理由で対象外。VOICEVOX COREをアプリから直接利用する構成に限定する。**各COREバイナリの配布条件、辞書/モデル等の同梱条件も、実装・配布前に個別確認する。
 - 最新のWindows Gradle確認は環境側のロックファイル権限拒否およびGradle daemon接続失敗でコンパイラ起動前に停止した。Kotlinエラー4点は修正済みだが、修正後のcompile成功は確認できていない。Desktop開発着手前にWindowsのM1/M2ゲートを再実行する。
+- `:desktopApp`を追加し、Compose DesktopのJVM起動シェルと`:shared`のDesktop JVMターゲットを定義した。D0/D1の最小構成として、まずWindows向けコンパイルと起動確認を行う。
 
 ## 0. ゴール
 
@@ -104,7 +105,7 @@ platformMain
 
 ### まだ必要なもの
 
-- `desktopApp`または`composeApp` Gradle module
+- `desktopApp`または`composeApp` Gradle module（最小Compose Desktop起動シェルを追加済み）
 - Windows/macOS Desktop target
 - Compose Desktop application packaging
 - Desktop用Platform interface実装
@@ -163,8 +164,8 @@ platformMain
 
 | ID | マイルストーン | 完了条件 |
 |---|---|---|
-| D0 | Desktop module設計 | Windows/macOSのCompose Desktop targetが定義される |
-| D1 | Desktop空アプリ起動 | 両OSでウィンドウが開き、shared APIを呼べる |
+| D0 | Desktop module設計 | Windows/macOSのCompose Desktop targetが定義される（最小構成完了） |
+| D1 | Desktop空アプリ起動 | 両OSでウィンドウが開き、shared APIを呼べる（Windowsビルド検証中） |
 | D2 | 共通チャットUI | セッション一覧、メッセージ、入力欄、Markdownが動く |
 | D3 | クラウドチャット | 1プロバイダーのストリーミング送受信が動く |
 | D4 | 履歴・設定 | DB、APIキー、テーマ、ログが動く |
