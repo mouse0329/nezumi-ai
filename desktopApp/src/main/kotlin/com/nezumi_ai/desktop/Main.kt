@@ -1,20 +1,19 @@
 package com.nezumi_ai.desktop
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import com.nezumi_ai.data.database.availableProcessorCount
-import com.nezumi_ai.data.database.randomUuidString
+import com.nezumi_ai.presentation.ui.model.SharedChatState
+import com.nezumi_ai.presentation.ui.model.SharedChatEvent
+import com.nezumi_ai.presentation.ui.model.reduce
+import com.nezumi_ai.presentation.ui.screen.SharedChatScreen
 
 fun main() = application {
     Window(
@@ -27,17 +26,30 @@ fun main() = application {
 
 @Composable
 private fun DesktopShell() {
-    val instanceId = remember { randomUuidString() }
+    var chatState by remember { mutableStateOf(SharedChatState.initial()) }
+    val logoPainter = remember { ColorPainter(Color(0xFF6D4C41)) }
+    val menuPainter = remember { ColorPainter(Color(0xFF6D4C41)) }
     MaterialTheme {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text("ネズミAI Desktop")
-            Text("KMP shared is connected")
-            Text("CPU threads: ${availableProcessorCount()}")
-            Text("Instance: $instanceId")
-        }
+        SharedChatScreen(
+            title = "新しいセッション",
+            modelName = "Desktop / shared UI",
+            messages = chatState.messages,
+            inputText = chatState.draft,
+            onInputTextChange = {
+                chatState = chatState.reduce(SharedChatEvent.DraftChanged(it))
+            },
+            onSendClick = {
+                chatState = chatState.reduce(SharedChatEvent.SendRequested)
+            },
+            sendEnabled = chatState.draft.isNotBlank(),
+            thinkingText = chatState.thinkingText,
+            activeToolNames = chatState.activeToolNames,
+            generationTps = chatState.generationTps,
+            error = chatState.error,
+            menuIcon = menuPainter,
+            logo = logoPainter,
+            onBackClick = {},
+            onTitleClick = {}
+        )
     }
 }
