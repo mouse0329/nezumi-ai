@@ -27,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import com.nezumi_ai.presentation.ui.composable.SvgSpinner
+import com.nezumi_ai.presentation.navigation.navigateAppRoute
 import androidx.compose.material3.Divider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -1128,7 +1129,7 @@ class SetupWizardFragment : Fragment() {
     }
 
     private fun navigateToChat(sessionId: Long) {
-        findNavController().navigate(
+        findNavController().navigateAppRoute(
             com.nezumi_ai.presentation.navigation.AppRoute.ChatSession(sessionId),
             navOptions {
                 popUpTo(R.id.setupWizardFragment) {

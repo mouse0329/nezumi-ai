@@ -113,6 +113,8 @@ import kotlin.math.roundToInt
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
 import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
+import com.nezumi_ai.presentation.navigation.AppRoute
+import com.nezumi_ai.presentation.navigation.navigateAppRoute
 
 class SettingsComposeFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
@@ -282,7 +284,7 @@ class SettingsComposeFragment : Fragment() {
         //   指示書: 「設定リンクをクリックしたら画像タブに自動切り替えして」に対応。
         //   sectionTitles = [全般, 推論, 画像, メモリ, チャット, デバッグ] なので
         //   「画像」 = index 2。
-        val startSection = arguments?.getInt("startSection", -1) ?: -1
+        val startSection = arguments?.getInt(AppRoute.Arguments.START_SECTION, -1) ?: -1
  // ログタブは常時 index 5。ツール = 6、スキル = 7、ストレージ = 8、デバッグ = 9。
         val maxAllowedSection = if (BuildConfig.DEBUG) 9 else 8
         if (startSection in 0..maxAllowedSection) {
@@ -889,7 +891,7 @@ class SettingsComposeFragment : Fragment() {
                 onDismiss = { aboutDialogVisible = false },
                 onOpenLicenses = {
                     aboutDialogVisible = false
-                    findNavController().navigate(
+                    findNavController().navigateAppRoute(
                         com.nezumi_ai.presentation.navigation.AppRoute.License
                     )
                 }
@@ -1782,7 +1784,9 @@ class SettingsComposeFragment : Fragment() {
                     }
                     7 -> SkillManagementCard(skillScanResult, onImport = { skillImportLauncher.launch(arrayOf("application/zip")) }, settingsSearchJumpState = settingsSearchJumpState)
                     8 -> StorageManagementSection(onOpenSession = { sessionId ->
-                        findNavController().navigate(R.id.chatFragment, Bundle().apply { putLong("sessionId", sessionId) })
+                        findNavController().navigateAppRoute(
+                            com.nezumi_ai.presentation.navigation.AppRoute.ChatSession(sessionId)
+                        )
                     })
                     // デバッグタブは BuildConfig.DEBUG 時のみ index 9
                     9 -> if (BuildConfig.DEBUG) {
@@ -1800,21 +1804,21 @@ class SettingsComposeFragment : Fragment() {
                     }
                     TextButton(onClick = {
                         PreferencesHelper.resetInitialSetupCompleted(requireContext())
-                        findNavController().navigate(
+                        findNavController().navigateAppRoute(
                             com.nezumi_ai.presentation.navigation.AppRoute.Setup
                         )
                     }) {
                         Text(text = stringResource(id = R.string.settings_inference_setup_open))
                     }
                     TextButton(onClick = {
-                        findNavController().navigate(
+                        findNavController().navigateAppRoute(
                             com.nezumi_ai.presentation.navigation.AppRoute.Help
                         )
                     }) {
                         Text(text = stringResource(id = R.string.open_help_page))
                     }
                     TextButton(onClick = {
-                        findNavController().navigate(
+                        findNavController().navigateAppRoute(
                             com.nezumi_ai.presentation.navigation.AppRoute.License
                         )
                     }) {

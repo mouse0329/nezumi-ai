@@ -55,6 +55,7 @@ import com.nezumi_ai.data.miniapp.MiniAppException
 import com.nezumi_ai.data.miniapp.MiniAppInstaller
 import com.nezumi_ai.data.miniapp.MiniAppStore
 import com.nezumi_ai.presentation.ui.theme.NezumiComposeTheme
+import com.nezumi_ai.presentation.navigation.navigateAppRoute
 import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,7 +80,7 @@ class MiniAppManagerFragment : Fragment() {
             NezumiComposeTheme {
                 MiniAppManagerScreen(
                     onOpenApp = { appId ->
-                        findNavController().navigate(
+                        findNavController().navigateAppRoute(
                             com.nezumi_ai.presentation.navigation.AppRoute.MiniAppRunner(appId)
                         )
                     },

@@ -109,6 +109,7 @@ import com.nezumi_ai.sd.SdScheduler
 import com.nezumi_ai.sd.safety.SafetyResult
 import java.io.File
 import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
+import com.nezumi_ai.presentation.navigation.navigateAppRoute
 
 data class LibraryItem(
     val bitmap: Bitmap,
@@ -180,7 +181,7 @@ class ImageGenFragment : Fragment() {
                 //   onCreate でこの値を読んで内部タブを切り替える。
                 val navigateToSettings: () -> Unit = {
                     runCatching {
-                        findNavController().navigate(
+                        findNavController().navigateAppRoute(
                             com.nezumi_ai.presentation.navigation.AppRoute.Settings(startSection = 2)
                         )
                     }

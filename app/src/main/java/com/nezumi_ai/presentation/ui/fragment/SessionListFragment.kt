@@ -23,6 +23,7 @@ import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModelFactory
 import com.nezumi_ai.presentation.ui.screen.HistorySearchModal
 import com.nezumi_ai.presentation.ui.screen.SessionListScreen
 import kotlinx.coroutines.launch
+import com.nezumi_ai.presentation.navigation.navigateAppRoute
 
 class SessionListFragment : Fragment() {
 
@@ -121,13 +122,13 @@ class SessionListFragment : Fragment() {
     }
 
     private fun navigateToChat(sessionId: Long) {
-        findNavController().navigate(
+        findNavController().navigateAppRoute(
             com.nezumi_ai.presentation.navigation.AppRoute.ChatSession(sessionId)
         )
     }
 
     private fun navigateToChatWithScroll(sessionId: Long, messageId: Long) {
-        findNavController().navigate(
+        findNavController().navigateAppRoute(
             com.nezumi_ai.presentation.navigation.AppRoute.ChatSession(
                 sessionId = sessionId,
                 scrollToMessageId = messageId,

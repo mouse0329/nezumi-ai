@@ -8,6 +8,14 @@ package com.nezumi_ai.presentation.navigation
  * depending on Android Fragment or resource IDs.
  */
 sealed interface AppRoute {
+    object Arguments {
+        const val SESSION_ID = "sessionId"
+        const val IS_INCOGNITO = "isIncognito"
+        const val SCROLL_TO_MESSAGE_ID = "scrollToMessageId"
+        const val START_SECTION = "startSection"
+        const val APP_ID = "appId"
+    }
+
     data object Chat : AppRoute
     data class ChatSession(
         val sessionId: Long,

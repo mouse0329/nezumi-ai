@@ -111,6 +111,7 @@ import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.R
 import com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText
 import com.nezumi_ai.presentation.ui.screen.ChatScreen
+import com.nezumi_ai.presentation.navigation.AppRoute
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.stripGemmaTokens
@@ -215,9 +216,9 @@ class ChatFragment : Fragment() {
     private lateinit var viewModel: ChatViewModel
     private lateinit var adapter: MessageAdapter
     private val navigationSessionId: Long
-        get() = arguments?.getLong("sessionId", -1L) ?: -1L
+        get() = arguments?.getLong(AppRoute.Arguments.SESSION_ID, -1L) ?: -1L
     private val navigationIsIncognito: Boolean
-        get() = arguments?.getBoolean("isIncognito", false) ?: false
+        get() = arguments?.getBoolean(AppRoute.Arguments.IS_INCOGNITO, false) ?: false
     private var modelOptions: List<ModelOption> = emptyList()
     private var responseTypingAnimationJob: Job? = null
     private lateinit var settingsRepository: SettingsRepository
@@ -1269,7 +1270,10 @@ class ChatFragment : Fragment() {
                     viewModel.setCurrentSession(sessionId)
 
                     // 検索結果からのジャンプ: scrollToMessageId が指定されている場合
-                    val scrollToId = arguments?.getLong("scrollToMessageId", -1L) ?: -1L
+                    val scrollToId = arguments?.getLong(
+                        AppRoute.Arguments.SCROLL_TO_MESSAGE_ID,
+                        -1L
+                    ) ?: -1L
                     if (scrollToId > 0L) {
                         withContext(Dispatchers.Main) {
                             scrollToMessageId(scrollToId)

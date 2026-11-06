@@ -11,7 +11,7 @@ import com.nezumi_ai.R
  * The current Android host still uses Fragment destinations for compatibility;
  * callers do not need to know about nav_graph resource IDs.
  */
-fun NavController.navigate(
+fun NavController.navigateAppRoute(
     route: AppRoute,
     options: NavOptions? = null,
 ) {
@@ -20,9 +20,11 @@ fun NavController.navigate(
         is AppRoute.ChatSession -> navigate(
             R.id.chatFragment,
             Bundle().apply {
-                putLong("sessionId", route.sessionId)
-                putBoolean("isIncognito", route.isIncognito)
-                route.scrollToMessageId?.let { putLong("scrollToMessageId", it) }
+                putLong(AppRoute.Arguments.SESSION_ID, route.sessionId)
+                putBoolean(AppRoute.Arguments.IS_INCOGNITO, route.isIncognito)
+                route.scrollToMessageId?.let {
+                    putLong(AppRoute.Arguments.SCROLL_TO_MESSAGE_ID, it)
+                }
             },
             options,
         )
@@ -30,7 +32,7 @@ fun NavController.navigate(
         is AppRoute.Settings -> navigate(
             R.id.settingsFragment,
             Bundle().apply {
-                route.startSection?.let { putInt("startSection", it) }
+                route.startSection?.let { putInt(AppRoute.Arguments.START_SECTION, it) }
             }.takeIf { route.startSection != null },
             options,
         )
@@ -45,7 +47,7 @@ fun NavController.navigate(
         AppRoute.MiniAppManager -> navigate(R.id.miniAppManagerFragment, null, options)
         is AppRoute.MiniAppRunner -> navigate(
             R.id.miniAppRunnerFragment,
-            Bundle().apply { putString("appId", route.appId) },
+            Bundle().apply { putString(AppRoute.Arguments.APP_ID, route.appId) },
             options,
         )
     }

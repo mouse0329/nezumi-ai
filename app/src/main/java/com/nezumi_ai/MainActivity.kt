@@ -74,7 +74,7 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.export.SessionExportWriter
 import com.nezumi_ai.presentation.ui.theme.NezumiComposeTheme
 import com.nezumi_ai.presentation.navigation.AppRoute
-import com.nezumi_ai.presentation.navigation.navigate
+import com.nezumi_ai.presentation.navigation.navigateAppRoute
 import com.nezumi_ai.presentation.navigation.createAppGraph
 import com.nezumi_ai.utils.CrashLogDialog
 import com.nezumi_ai.utils.LocaleHelper
@@ -243,7 +243,7 @@ class MainActivity : AppCompatActivity() {
                         withNavController { navController ->
                             if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
                                 Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
-                                navController.navigate(AppRoute.Setup)
+                                navController.navigateAppRoute(AppRoute.Setup)
                             } else {
                                 ensureCurrentSessionExists()
                             }
@@ -521,12 +521,8 @@ class MainActivity : AppCompatActivity() {
                     HistorySearchModal(
                         viewModel = viewModel,
                         onResultClick = { sessionId, messageId ->
-                            val bundle = android.os.Bundle().apply {
-                                putLong("sessionId", sessionId)
-                                putLong("scrollToMessageId", messageId)
-                            }
                             withNavController { navController ->
-                                navController.navigate(
+                                navController.navigateAppRoute(
                                     AppRoute.ChatSession(
                                         sessionId = sessionId,
                                         scrollToMessageId = messageId,
@@ -707,7 +703,7 @@ class MainActivity : AppCompatActivity() {
         if (navController.currentDestination?.id == R.id.chatFragment) {
             navController.popBackStack(R.id.chatFragment, true)
         }
-        navController.navigate(
+        navController.navigateAppRoute(
             AppRoute.ChatSession(sessionId = sessionId),
             navOptions {
                 launchSingleTop = true
@@ -1253,7 +1249,7 @@ class MainActivity : AppCompatActivity() {
                     if (navController.currentDestination?.id == R.id.chatFragment) {
                         navController.popBackStack(R.id.chatFragment, true)
                     }
-                    navController.navigate(
+                    navController.navigateAppRoute(
                         AppRoute.ChatSession(sessionId = sessionId, isIncognito = true),
                         navOptions { launchSingleTop = true }
                     )
@@ -1274,7 +1270,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("設定画面へ") { _, _ ->
                 withNavController { navController ->
                     if (navController.currentDestination?.id != R.id.settingsFragment) {
-                        navController.navigate(AppRoute.Settings())
+                        navController.navigateAppRoute(AppRoute.Settings())
                     }
                 }
             }
