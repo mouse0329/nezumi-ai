@@ -10,6 +10,11 @@ data class SharedSessionSummary(
     val isIncognito: Boolean
 )
 
+data class SharedSessionGroup(
+    val label: String,
+    val sessions: List<SharedSessionSummary>
+)
+
 fun ChatSessionEntity.toSharedSessionSummary(): SharedSessionSummary =
     SharedSessionSummary(
         id = id,
