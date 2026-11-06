@@ -279,6 +279,7 @@ AppShell
 履歴検索モーダルも`SharedHistorySearchModal`へ移設し、検索結果モデルとセッション単位の展開表示を共通化した。
 チャット画面は`SharedChatScaffold`へレイアウト骨格を移設し、Android固有の
 RecyclerView、添付プレビュー、入力IME、ローディング処理はスロットとしてAndroid側に残している。
+ツール実行結果カードのレイアウトも`SharedToolResultCard`へ移設し、ツール固有のアイコン・文言解決はAndroid側に残している。
 Android固有の
 `RecyclerView`、`AndroidView`、入力IME処理を含む既存画面本体は、Platform
 コールバックへ分離してから置き換える。

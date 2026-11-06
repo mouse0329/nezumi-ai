@@ -1,26 +1,14 @@
 package com.nezumi_ai.presentation.ui.component
 
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.colorResource
-import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -28,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nezumi_ai.R
 import com.nezumi_ai.data.inference.ToolResultCard
+import com.nezumi_ai.presentation.ui.composable.SharedToolResultCard
 import java.util.Locale
 
 /**
@@ -148,48 +137,15 @@ fun ToolResultCardContent(
         }
     }
 
-    // bg_tool_result_card.xml / bg_tool_result_card_error.xml の再現
-    val shape = RoundedCornerShape(12.dp)
-    val backgroundColor = colorResource(
-        if (card.success) R.color.tool_card_success_bg else R.color.tool_card_error_bg
+    SharedToolResultCard(
+        icon = painterResource(iconRes),
+        title = title,
+        subtitle = subtext,
+        success = card.success,
+        modifier = modifier,
+        successBackground = colorResource(R.color.tool_card_success_bg),
+        errorBackground = colorResource(R.color.tool_card_error_bg)
     )
-    val titleColor = if (card.success) {
-        MaterialTheme.colorScheme.onSurface
-    } else {
-        MaterialTheme.colorScheme.error
-    }
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .widthIn(min = dimensionResource(R.dimen.tool_result_card_min_width))
-            .background(backgroundColor, shape)
-            .border(1.dp, colorResource(R.color.border), shape)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Image(
-            painter = painterResource(iconRes),
-            contentDescription = stringResource(R.string.tool_result_icon),
-            modifier = Modifier.size(24.dp),
-            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurfaceVariant)
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = titleColor
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = subtext,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
 }
 
 /** バッテリーステータスを日本語に翻訳 (旧 ToolResultCardView と同じマッピング)。 */
