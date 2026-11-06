@@ -1,11 +1,11 @@
 package com.nezumi_ai.presentation.ui.screen
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -88,8 +88,9 @@ fun ChatScreen(
     modelLoadingOverlay: @Composable () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(modifier = modifier.fillMaxSize().background(colorResource(com.nezumi_ai.R.color.bg_chat))) {
-        Column(modifier = Modifier.fillMaxSize()) {
+    SharedChatScaffold(
+        modifier = modifier.fillMaxSize().background(colorResource(com.nezumi_ai.R.color.bg_chat)),
+        header = {
             ChatHeader(
                 title = chatTitle,
                 titleContentDescription = chatTitleContentDescription,
@@ -99,37 +100,29 @@ fun ChatScreen(
                 onTitleClick = onChatTitleClick,
                 actions = headerActions
             )
-            contextMeter()
-
-            // メッセージ一覧領域
-            Box(
+        },
+        contextMeter = contextMeter,
+        messageContent = {
+            AndroidView(
+                factory = { ctx ->
+                    messagesRecyclerFactory(ctx).also { rv ->
+                        onMessagesRecyclerReady(rv)
+                    }
+                },
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    // AndroidView の RecyclerView は Compose のレイアウト境界を越えて
-                    // 描画できるため、ヘッダーや入力欄の背後へメッセージがはみ出さない
-                    // ように一覧領域で明示的に切り抜く。
+                    .fillMaxSize()
                     .clipToBounds()
-            ) {
-                AndroidView(
-                    factory = { ctx ->
-                        messagesRecyclerFactory(ctx).also { rv ->
-                            onMessagesRecyclerReady(rv)
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                )
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+        },
+        messageOverlays = {
+            Box(modifier = Modifier.fillMaxSize()) {
                 if (showEmptyState) {
                     Box(Modifier.fillMaxSize()) { emptyState() }
                 }
                 if (showMessagesLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.Center)
-                    )
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 }
-                // タイピング + ツール進捗 + 「下へ」ボタン (下部に縦積み)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -140,9 +133,11 @@ fun ChatScreen(
                     scrollToBottomButton()
                 }
             }
-
-            // メディアプレビューバー (入力欄の直上)
-            Box(modifier = Modifier.background(mediaPreviewBarColor)) {
+        },
+        mediaPreview = {
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier.background(mediaPreviewBarColor)
+            ) {
                 MediaPreviewBar(
                     hasImage = hasImage,
                     hasAudio = hasAudio,
@@ -162,7 +157,8 @@ fun ChatScreen(
                     onOpenViewer = onOpenViewer
                 )
             }
-
+        },
+        inputBar = {
             ChatInputBar(
                 barColor = inputBarColor,
                 isGenerating = isGenerating,
@@ -182,9 +178,7 @@ fun ChatScreen(
                 onClipboardImagePaste = onClipboardImagePaste,
                 onInputViewReady = onInputViewReady
             )
-        }
-
-        // モデルロード中の全画面オーバーレイ (タップを消費して下層へ透過させない)
-        modelLoadingOverlay()
-    }
+        },
+        loadingOverlay = modelLoadingOverlay
+    )
 }
