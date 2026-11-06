@@ -277,6 +277,8 @@ AppShell
 セッション一覧の表示、グループ化、選択、固定、名前変更、削除、新規作成、検索導線も
 `SharedSessionListScreen`へ移設し、Android側はViewModelとナビゲーションを接続するアダプターになった。
 履歴検索モーダルも`SharedHistorySearchModal`へ移設し、検索結果モデルとセッション単位の展開表示を共通化した。
+チャット画面は`SharedChatScaffold`へレイアウト骨格を移設し、Android固有の
+RecyclerView、添付プレビュー、入力IME、ローディング処理はスロットとしてAndroid側に残している。
 Android固有の
 `RecyclerView`、`AndroidView`、入力IME処理を含む既存画面本体は、Platform
 コールバックへ分離してから置き換える。
