@@ -360,7 +360,7 @@ class RemoteEngineConnection(
                         EngineLoadLogHub.note(line)
                     }
                 })
-                awaitLoadWithIdleTimeout(result)
+                awaitLoadOrKill(result)
             } catch (t: Throwable) {
                 handleRemoteException(t, "loadModel")
             } finally {
@@ -370,35 +370,17 @@ class RemoteEngineConnection(
         }.also { invalidateEngineStatusCache() }
 
     /**
-     * ロード完了を待つ。制限時間は開始からではなく、最後のエンジンログが
-     * 途絶えてから [LOAD_IDLE_TIMEOUT_MS]。ログが再び届けば期限はその時刻から
-     * やり直す。開始時に合成ログを積むと、ログ継続中でも開始 60 秒で切れていた。
+     * ロード完了コールバックを待つ。エンジンログは見ない。
+     * 定期的に ping を送り、最後の応答から [PreferencesHelper.getModelLoadTimeoutMs]
+     * の間返ってこなければ hung とみなしてリモートプロセスを殺す。
      */
-    private suspend fun awaitLoadWithIdleTimeout(
+    private suspend fun awaitLoadOrKill(
         result: CompletableDeferred<Result<Unit>>
     ): Result<Unit> {
-        val idleTimeoutMs = com.nezumi_ai.utils.PreferencesHelper
-            .getModelLoadIdleTimeoutMs(context).toLong()
+        val unresponsiveTimeoutMs = com.nezumi_ai.utils.PreferencesHelper
+            .getModelLoadTimeoutMs(context).toLong()
+        var lastPongAt = SystemClock.elapsedRealtime()
         while (true) {
-            if (result.isCompleted) return result.await()
-            val now = SystemClock.elapsedRealtime()
-            val lastLog = EngineLoadLogHub.lastLogElapsedMs()
-            val idleAnchor = if (lastLog > 0L) lastLog else EngineLoadLogHub.loadStartedElapsedMs()
-            val idleFor = now - idleAnchor
-            if (idleAnchor > 0L && idleFor >= idleTimeoutMs) {
-                val since = if (lastLog > 0L) "last engine log" else "load start (no engine log)"
-                Log.w(tag, "loadModel idle timeout; no engine log for ${idleFor}ms ($since)")
-                val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
-                return Result.failure(
-                    RemoteEngineProcessDiedException(
-                        "loadModel idle timeout; no engine log for ${idleTimeoutMs}ms",
-                        likelyOutOfMemory
-                    )
-                )
-            }
-            val remaining = (idleTimeoutMs - idleFor).coerceAtLeast(1L)
-            val step = minOf(remaining, 250L)
-            delay(step)
             if (result.isCompleted) return result.await()
             val pid = lastKnownPid
             if (pid > 0 && !isProcessAlive(pid)) {
@@ -410,7 +392,43 @@ class RemoteEngineConnection(
                     )
                 )
             }
+            val pingOk = pingRemoteProcess()
+            val now = SystemClock.elapsedRealtime()
+            if (pingOk) {
+                lastPongAt = now
+            } else if (now - lastPongAt >= unresponsiveTimeoutMs) {
+                Log.w(
+                    tag,
+                    "loadModel: remote process unresponsive for ${now - lastPongAt}ms; killing"
+                )
+                runCatching { shutdownProcess() }
+                    .onFailure { Log.w(tag, "loadModel unresponsive: shutdownProcess failed", it) }
+                val likelyOutOfMemory = wasProcessKilledForLowMemory(pid)
+                if (!result.isCompleted) {
+                    result.complete(
+                        Result.failure(
+                            RemoteEngineProcessDiedException(
+                                "loadModel: remote process unresponsive for ${unresponsiveTimeoutMs}ms",
+                                likelyOutOfMemory
+                            )
+                        )
+                    )
+                }
+                return result.await()
+            }
+            if (result.isCompleted) return result.await()
+            delay(LOAD_PING_INTERVAL_MS)
         }
+    }
+
+    /** Binder 越しに ping。応答が [LOAD_PING_REPLY_TIMEOUT_MS] 以内に来なければ false。 */
+    private suspend fun pingRemoteProcess(): Boolean {
+        val remote = engine ?: return false
+        return withTimeoutOrNull(LOAD_PING_REPLY_TIMEOUT_MS) {
+            withContext(Dispatchers.IO) {
+                runCatching { remote.ping() == 1 }.getOrDefault(false)
+            }
+        } == true
     }
 
     suspend fun unloadModel(): Result<Unit> = withContext(Dispatchers.IO) {
@@ -735,9 +753,11 @@ class RemoteEngineConnection(
 
     companion object {
         private const val BIND_TIMEOUT_MS = 15_000L
-        /** ログが途切れてからこの時間動かなければロード失敗。開始からの壁時計ではない。 */
-        private const val LOAD_IDLE_TIMEOUT_MS = 60_000L
         private const val UNLOAD_TIMEOUT_MS = 10_000L
+        /** ロード中の生存確認間隔。 */
+        private const val LOAD_PING_INTERVAL_MS = 1_000L
+        /** 1 回の ping 応答待ち。Binder が hung していてもループを止めない。 */
+        private const val LOAD_PING_REPLY_TIMEOUT_MS = 2_000L
         /** getEngineStatus のキャッシュ TTL。連打吸収用の短い窓。 */
         private const val ENGINE_STATUS_CACHE_TTL_MS = 2_000L
         private const val SELF_KILL_GRACE_MS = 1_500L

@@ -1643,8 +1643,8 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="model_loading_phase_engine_init">Initializing engine</string>
     <string name="model_loading_phase_template_scan">Checking chat template</string>
     <string name="model_loading_phase_memory_estimate">Estimating memory</string>
-    <string name="settings_load_idle_timeout_title">Model load idle timeout</string>
-    <string name="settings_load_idle_timeout_desc">Seconds without engine log during load before failure (10–600)</string>
+    <string name="settings_load_idle_timeout_title">Model load unresponsive timeout</string>
+    <string name="settings_load_idle_timeout_desc">Seconds without a ping reply during load before killing the engine process (5–300)</string>
     <string name="settings_generation_stall_timeout_title">Output stall timeout</string>
     <string name="settings_generation_stall_timeout_desc">Seconds without chunks after first token before abort (30–900)</string>
     <string name="settings_clear_memory_estimate_cache_title">Clear memory estimate cache</string>

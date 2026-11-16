@@ -278,6 +278,8 @@ class LiteRtEngineService : Service() {
 
         override fun getRemotePid(): Int = Process.myPid()
 
+        override fun ping(): Int = 1
+
         override fun requestProcessExit() {
             Log.i(TAG, "requestProcessExit received; cancelling inference then killing :litert process")
             serviceScope.launch {

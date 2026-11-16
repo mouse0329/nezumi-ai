@@ -156,14 +156,20 @@ fun nezumiSwitchColors(): SwitchColors {
         checkedThumbColor = Color.White,
         checkedTrackColor = primary,
         checkedBorderColor = primary,
+        // 未指定だと checkedIconColor が onPrimaryContainer (#0C4A6E) のままになり、
+        // つまみ内のチェックアイコンがライトモードで黒く見える。
+        checkedIconColor = Color.White,
         uncheckedThumbColor = Color.White,
         uncheckedTrackColor = primaryContainer,
         uncheckedBorderColor = onSurfaceVariant,
+        uncheckedIconColor = Color.White,
         disabledCheckedThumbColor = Color.White.copy(alpha = 0.6f),
         disabledCheckedTrackColor = primary.copy(alpha = 0.4f),
         disabledCheckedBorderColor = Color.Transparent,
+        disabledCheckedIconColor = Color.White.copy(alpha = 0.6f),
         disabledUncheckedThumbColor = Color.White.copy(alpha = 0.6f),
         disabledUncheckedTrackColor = onPrimaryContainer.copy(alpha = 0.2f),
-        disabledUncheckedBorderColor = onSurfaceVariant.copy(alpha = 0.4f)
+        disabledUncheckedBorderColor = onSurfaceVariant.copy(alpha = 0.4f),
+        disabledUncheckedIconColor = Color.White.copy(alpha = 0.6f)
     )
 }

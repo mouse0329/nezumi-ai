@@ -18,6 +18,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -73,12 +74,17 @@ fun SharedAttachmentOptionsSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 14.dp)
             ) {
-                Text(thinkingLabel, fontWeight = FontWeight.SemiBold)
+                Text(
+                    thinkingLabel,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold
+                )
                 Switch(
                     checked = thinkingOn,
                     onCheckedChange = onThinkingChange,
                     enabled = thinkingSwitchable,
-                    modifier = Modifier.padding(start = 12.dp)
+                    modifier = Modifier.padding(start = 12.dp),
+                    colors = attachmentSwitchColors()
                 )
                 if (effortLevels.isNotEmpty()) {
                     EffortSegments(
@@ -123,11 +129,11 @@ private fun EffortSegments(
         levels.forEachIndexed { index, level ->
             Text(
                 text = labels[level] ?: level,
-                color = if (level == effectiveSelected) MaterialTheme.colorScheme.onSurface
+                color = if (level == effectiveSelected) MaterialTheme.colorScheme.onPrimaryContainer
                 else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.background(
-                    if (level == effectiveSelected) MaterialTheme.colorScheme.surfaceVariant
+                    if (level == effectiveSelected) MaterialTheme.colorScheme.primaryContainer
                     else Color.Transparent
                 ).clickable { onSelect(level) }.padding(horizontal = 10.dp, vertical = 7.dp)
             )
@@ -163,6 +169,31 @@ private fun AttachmentTile(
         ) {
             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
         }
-        Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(top = 8.dp)
+        )
     }
 }
+
+@Composable
+private fun attachmentSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = Color.White,
+    checkedTrackColor = MaterialTheme.colorScheme.primary,
+    checkedBorderColor = MaterialTheme.colorScheme.primary,
+    checkedIconColor = Color.White,
+    uncheckedThumbColor = Color.White,
+    uncheckedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+    uncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    uncheckedIconColor = Color.White,
+    disabledCheckedThumbColor = Color.White.copy(alpha = 0.6f),
+    disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+    disabledCheckedBorderColor = Color.Transparent,
+    disabledCheckedIconColor = Color.White.copy(alpha = 0.6f),
+    disabledUncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+    disabledUncheckedTrackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
+    disabledUncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+    disabledUncheckedIconColor = Color.White.copy(alpha = 0.6f)
+)

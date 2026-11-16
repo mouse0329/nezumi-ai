@@ -1399,10 +1399,10 @@ class SettingsComposeFragment : Fragment() {
 
                                 HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
 
-                                // ロード無通信タイムアウト / 出力ストールタイムアウト
-                                var loadIdleTimeoutSec by remember {
+                                // ロード中のプロセス無応答タイムアウト / 出力ストールタイムアウト
+                                var loadTimeoutSec by remember {
                                     mutableStateOf(
-                                        (PreferencesHelper.getModelLoadIdleTimeoutMs(context) / 1000).toString()
+                                        (PreferencesHelper.getModelLoadTimeoutMs(context) / 1000).toString()
                                     )
                                 }
                                 var generationStallTimeoutSec by remember {
@@ -1423,11 +1423,11 @@ class SettingsComposeFragment : Fragment() {
                                     )
                                     OutlinedTextField(
                                         modifier = Modifier.fillMaxWidth(),
-                                        value = loadIdleTimeoutSec,
+                                        value = loadTimeoutSec,
                                         onValueChange = { raw ->
-                                            loadIdleTimeoutSec = raw.filter { it.isDigit() }.take(4)
-                                            loadIdleTimeoutSec.toIntOrNull()?.let { sec ->
-                                                PreferencesHelper.setModelLoadIdleTimeoutMs(context, sec * 1000)
+                                            loadTimeoutSec = raw.filter { it.isDigit() }.take(4)
+                                            loadTimeoutSec.toIntOrNull()?.let { sec ->
+                                                PreferencesHelper.setModelLoadTimeoutMs(context, sec * 1000)
                                             }
                                         },
                                         singleLine = true,
@@ -2180,11 +2180,11 @@ class SettingsComposeFragment : Fragment() {
 
     private fun onBackButtonPressed() {
         // 保存自体は入力の都度自動で行われるため、ここではさらに flush するだけ。
-        // 不正入力がある際はエラーダイアログで知らせ、戻らないでフィールドの
-        // 修正を促す。
+        // 不正入力は保存せず通知するが、設定画面から戻れなくならないようにする。
         val error = validateSettings()
         if (error != null) {
-            errorDialogMessage = error
+            toast(error)
+            findNavController().navigateUp()
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {

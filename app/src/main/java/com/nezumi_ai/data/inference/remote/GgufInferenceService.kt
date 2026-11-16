@@ -319,6 +319,8 @@ class GgufInferenceService : Service() {
 
         override fun getRemotePid(): Int = Process.myPid()
 
+        override fun ping(): Int = 1
+
         override fun requestProcessExit() {
             Log.i(TAG, "requestProcessExit received; unloading model then killing :gguf process")
             serviceScope.launch {

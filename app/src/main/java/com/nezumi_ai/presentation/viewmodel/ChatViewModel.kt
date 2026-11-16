@@ -1795,16 +1795,16 @@ class ChatViewModel(
         viewModelScope.launch {
             val thisJob = coroutineContext[Job] ?: return@launch
 
-            // 要望: モデル追加(送信開始)と同時にテンプレート由来の
-            // Thinking / ツール capability を自動有効化する (冪等・1回のみ)。
-            ensureModelAddedCapabilities(_selectedModel.value)
-
-            generationControlMutex.withLock {
-                generationJob?.cancel(UserStopCancellationException())
-                generationJob = thisJob
-            }
-
             try {
+                // 要望: モデル追加(送信開始)と同時にテンプレート由来の
+                // Thinking / ツール capability を自動有効化する (冪等・1回のみ)。
+                ensureModelAddedCapabilities(_selectedModel.value)
+
+                generationControlMutex.withLock {
+                    generationJob?.cancel(UserStopCancellationException())
+                    generationJob = thisJob
+                }
+
                 // Phase 3: 抽出キューが処理中なら完了を待つ（最大 30s）
                 if (_isExtracting.value) {
                     Log.d(TAG, "sendMessage: waiting for memory extraction to finish...")
@@ -1836,19 +1836,22 @@ class ChatViewModel(
                 // 画像付きメッセージは sendMessageWithMedia を使用すること。
                 generateAIResponse(sessionId, userMessage, images = emptyList(), audioClips = emptyList(), currentTurnMessageId = userMessageId)
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error sending message", e)
             } finally {
-                _isLoading.value = false
- // 早期 return / 例外パスで loadModelWithOverlay に到達せず
-                //   _isModelLoading が残り UI が固まるのを防止する防御的クリーンアップ。
-                //   loadModelWithOverlay 自体が到達した場合は既に自身の finally でクリア済み。
-                if (_isModelLoading.value && modelLoadingOverlayDepth == 0) {
-                    clearModelLoadingIndicator()
-                }
-                // このJobがまだcurrentなら null にする（前のJobから overwrite されない）
-                if (generationJob == thisJob) {
-                    generationJob = null
+                withContext(NonCancellable) {
+                    _isLoading.value = false
+                    // 早期 return / 例外パスで loadModelWithOverlay に到達せず
+                    //   _isModelLoading が残り UI が固まるのを防止する防御的クリーンアップ。
+                    //   loadModelWithOverlay 自体が到達した場合は既に自身の finally でクリア済み。
+                    if (_isModelLoading.value && modelLoadingOverlayDepth == 0) {
+                        clearModelLoadingIndicator()
+                    }
+                    // このJobがまだcurrentなら null にする（前のJobから overwrite されない）
+                    if (generationJob == thisJob) {
+                        generationJob = null
+                    }
                 }
             }
         }
@@ -4283,27 +4286,18 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.Default) {
             val thisJob = coroutineContext[Job]  // このJobインスタンスを保存
 
-            // 要望: モデル追加(送信開始)と同時にテンプレート由来の
-            // Thinking / ツール capability を自動有効化する (冪等・1回のみ)。
-            ensureModelAddedCapabilities(_selectedModel.value)
-            generationControlMutex.withLock {
-                generationJob?.cancel(UserStopCancellationException())
-                generationJob = thisJob
-            }
-            val sessionId = ensureValidCurrentSession()
-            if (sessionId == null) {
-                // セッション取得失敗時はローディング UI を必ず解除する
-                withContext(Dispatchers.Main) {
-                    _isLoading.value = false
-                    if (modelLoadingOverlayDepth == 0) {
-                        clearModelLoadingIndicator()
-                    }
-                }
-                if (generationJob == thisJob) generationJob = null
-                return@launch
-            }
             var imagesToCleanup = mutableListOf<Bitmap>()
             try {
+                // 要望: モデル追加(送信開始)と同時にテンプレート由来の
+                // Thinking / ツール capability を自動有効化する (冪等・1回のみ)。
+                ensureModelAddedCapabilities(_selectedModel.value)
+                generationControlMutex.withLock {
+                    generationJob?.cancel(UserStopCancellationException())
+                    generationJob = thisJob
+                }
+
+                val sessionId = ensureValidCurrentSession() ?: return@launch
+
  // 二重送信防止＆UI競合防止（同期側で既に立てているが冪等性のため再度セット）
                 withContext(Dispatchers.Main) {
                     _isLoading.value = true
@@ -4402,6 +4396,7 @@ class ChatViewModel(
                 // AI 応答を生成（計算集約的 - Default スレッド）
                 generateAIResponse(sessionId, userMessage, images, audioClips, currentTurnMessageId = userMessageId)
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error sending message with media", e)
                 // モデル推論失敗時にエラーダイアログが出ず、メディア付きメッセージ送信失敗の
@@ -4429,9 +4424,9 @@ class ChatViewModel(
                 }
             } finally {
                 // UI 更新 - Main スレッド
-                withContext(Dispatchers.Main) {
+                withContext(NonCancellable + Dispatchers.Main) {
                     _isLoading.value = false
- // 送信入り口で早期に立てた _isModelLoading が loadModelWithOverlay に
+                    // 送信入り口で早期に立てた _isModelLoading が loadModelWithOverlay に
                     //   到達せずに早期 return したケース（モデル未ダウンロード / メモリ不足 等）で
                     //   フラグが残り UI が固まるのを防止する防御的クリーンアップ。
                     if (_isModelLoading.value && modelLoadingOverlayDepth == 0) {

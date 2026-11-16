@@ -492,7 +492,7 @@ class MainActivity : AppCompatActivity() {
             .findFragmentById(R.id.nav_host_fragment_content_main)
                 as? androidx.navigation.fragment.NavHostFragment)
             ?.navController
-        if (navController != null) {
+        if (navController != null && navController.currentDestination != null) {
             action(navController)
             return
         }

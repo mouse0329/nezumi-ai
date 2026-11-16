@@ -33,6 +33,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -583,7 +584,7 @@ class SetupWizardFragment : Fragment() {
     private fun TelemetrySetupToggleRow(title: String, checked: Boolean, textPrimary: androidx.compose.ui.graphics.Color, onCheckedChange: (Boolean) -> Unit) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = textPrimary, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
+            Switch(checked = checked, onCheckedChange = onCheckedChange, colors = nezumiSwitchColors())
         }
     }
 

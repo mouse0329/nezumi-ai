@@ -100,6 +100,12 @@ interface IRemoteInferenceEngine {
     int getRemotePid();
 
     /**
+     * 生存確認。Binder スレッドで即返す。ネイティブロード中でも応答できること。
+     * 呼び出し側は応答が途絶えたらプロセス hung とみなす。
+     */
+    int ping();
+
+    /**
      * プロセス自身に終了を指示する (自殺方式)。
      * Stub 側で unloadModel 相当のクリーンアップ後に
      * Process.killProcess(Process.myPid()) を呼ぶ。
