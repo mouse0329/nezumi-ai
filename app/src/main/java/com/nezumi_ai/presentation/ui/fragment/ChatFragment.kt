@@ -2475,14 +2475,13 @@ class ChatFragment : Fragment() {
         imageInputEnabled = caps.imageEnabled
         audioInputEnabled = caps.audioEnabled
 
-        // 非対応メディアは選択状態を破棄し、送信対象から除外
+        // 画像入力非対応モデルでは画像・動画だけを破棄する。
+        // テキスト / ドキュメント添付は画像入力の対応可否に依存しない。
         if (!imageInputEnabled) {
             selectedImageUrisList = emptyList()  // Phase 11: 複数画像対応
-            selectedTextFiles = emptyList()
             selectedVideoUri = null
             selectedVideoDurationMs = 0L
             selectedVideoFrameCount = 0
-            selectedTextFiles = emptyList()
         }
         if (!audioInputEnabled) {
             selectedAudioUri = null
