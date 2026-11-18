@@ -192,6 +192,9 @@ class ChatViewModel(
 
     companion object {
         internal const val TAG = "ChatViewModel"
+        /** トークン単位の詳細ログ（RAW_CHUNK / STREAM_INMEMORY_UPDATE / DISPLAY_MESSAGES 等）。
+         *  デバッグビルドでも既定では出さない。ログ出力自体が描画遅延の原因になるため。 */
+        internal const val VERBOSE_STREAM_LOG = false
         internal const val RESPONSE_TIMEOUT_MS = 120_000L
         /** ストリーム中の Room 更新間隔（デバウンス: トークン毎のフル更新を間引く） */
         internal const val STREAM_PERSIST_INTERVAL_MS = 120L
@@ -1292,7 +1295,7 @@ class ChatViewModel(
                         Log.d(TAG, "STALE_MESSAGE_FLOW: discarding ${msgs.size} msgs for sessionId=$sessionId (active=${activeCollectionSessionId})")
                         return@collect
                     }
-                    if (BuildConfig.DEBUG) {
+                    if (BuildConfig.DEBUG && VERBOSE_STREAM_LOG) {
                         Log.d(
                             TAG,
                             "UPDATE_MESSAGES_FLOW: count=${msgs.size} messages=${msgs.map { "${it.role}:${it.content.take(30)}" }}"
@@ -3160,7 +3163,7 @@ class ChatViewModel(
         if (config.enableToolCalling) {
             val isGemma4Model = ModelNameHeuristics.isGemma4Model(engineModelName)
             val availableSkills = availableSkillsForCurrentPreset(config.enableToolCalling)
-            runCatching { McpToolRegistry.get(appContext).ensureFresh() }
+            perfTimed("mcp_ensure_fresh") { runCatching { McpToolRegistry.get(appContext).ensureFresh() } }
                 .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
             systemPrompt = GgufToolPromptBuilder.appendForLiteRt(
                 appContext, systemPrompt, isGemma4 = isGemma4Model, skills = availableSkills
@@ -3183,6 +3186,14 @@ class ChatViewModel(
         messages: List<MessageEntity>,
         sessionId: Long,
         contextWindowTokens: Int = 4096
+    ): String? = perfTimed("memory_block") {
+        buildRelevantMemoryBlockInner(messages, sessionId, contextWindowTokens)
+    }
+
+    private suspend fun buildRelevantMemoryBlockInner(
+        messages: List<MessageEntity>,
+        sessionId: Long,
+        contextWindowTokens: Int
     ): String? {
         val repo = memoryRepository ?: run {
             Log.d(TAG, "MEMORY_INJECT: memoryRepository is null")
@@ -3797,7 +3808,7 @@ class ChatViewModel(
                 "TOOL_FORMAT: engine=$engineModelName isGemma4=$isGemma4Model " +
                     "resolved=${ModelNameHeuristics.resolveModelNameForCheck(engineModelName)}"
             )
-            runCatching { McpToolRegistry.get(appContext).ensureFresh() }
+            perfTimed("mcp_ensure_fresh") { runCatching { McpToolRegistry.get(appContext).ensureFresh() } }
                 .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
             // GGUF エンジン経路のツール形式はネイティブ (llama.cpp) が GGUF 内蔵テンプレートから
             // 自動選択するため、Kotlin 側の事前判定 (resolveToolCallFormat) は使わない。
@@ -3870,8 +3881,18 @@ class ChatViewModel(
         }
     }
 
+    /** PERF ログ用: ブロックの所要時間を Log.i("PERF|kt|label|ms=...") に出す。 */
+    private inline fun <T> perfTimed(label: String, block: () -> T): T {
+        val t0 = System.nanoTime()
+        try {
+            return block()
+        } finally {
+            Log.i(TAG, "PERF|kt|$label|ms=${"%.1f".format((System.nanoTime() - t0) / 1_000_000.0)}")
+        }
+    }
+
     private fun trimPromptToWindow(prompt: String, contextWindowTokens: Int): String =
-        promptBuilding.trimPromptToWindow(prompt, contextWindowTokens)
+        perfTimed("trim_prompt") { promptBuilding.trimPromptToWindow(prompt, contextWindowTokens) }
 
     /**
      * 画像の説明を簡潔に生成

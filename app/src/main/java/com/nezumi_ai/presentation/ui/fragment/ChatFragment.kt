@@ -1329,7 +1329,7 @@ class ChatFragment : Fragment() {
             ) { messages, pendingMedia ->
                 if (pendingMedia != null) messages + listOf(pendingMedia) else messages
             }.collect { displayMessages ->
-                if (BuildConfig.DEBUG) {
+                if (BuildConfig.DEBUG && ChatViewModel.VERBOSE_STREAM_LOG) {
                     android.util.Log.d(
                         "ChatFragment",
                         "DISPLAY_MESSAGES: count=${displayMessages.size} messages=${displayMessages.map { "${it.role}:${it.content}" }}"

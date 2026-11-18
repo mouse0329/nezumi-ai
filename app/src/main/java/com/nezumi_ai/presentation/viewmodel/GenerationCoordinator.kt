@@ -777,7 +777,7 @@ internal class GenerationCoordinator(
                                                     vm._toolCallState.value = ToolCallState.Responding
                                                 }
                                                 val currentContent = answerBuilder.toString()
-                                                if (BuildConfig.DEBUG) {
+                                                if (BuildConfig.DEBUG && ChatViewModel.VERBOSE_STREAM_LOG) {
                                                     // プライバシー保護: 生成中テキストはユーザー由来の内容を含み得るため本文は出力しない
                                                     Log.d(ChatViewModel.TAG, "RAW_CHUNK: length=${seg.length}")
                                                 }
@@ -808,7 +808,7 @@ internal class GenerationCoordinator(
                                                             .coerceAtLeast(1L)
                                                         vm._currentTps.value = (tokenCount * 1000f) / elapsed
                                                     }
-                                                    if (BuildConfig.DEBUG) {
+                                                    if (BuildConfig.DEBUG && ChatViewModel.VERBOSE_STREAM_LOG) {
                                                         Log.d(
                                                             ChatViewModel.TAG,
                                                             "Chunk merged: ${currentContent.length} -> ${merged.length} chars (added ${merged.length - currentContent.length} chars)"
@@ -1087,7 +1087,7 @@ internal class GenerationCoordinator(
                                     //   Room Flow 再配信で古いスナップショットが届いても、次の persist で
                                     //   thinkingContent が保存されているため上書きされない。
                                     if (!shouldPersistToDb) {
-                                        if (BuildConfig.DEBUG) {
+                                        if (BuildConfig.DEBUG && ChatViewModel.VERBOSE_STREAM_LOG) {
                                             Log.d(
                                                 ChatViewModel.TAG,
                                                 "STREAM_INMEMORY_UPDATE: id=$id contentLen=${contentForUi.length} " +
@@ -1113,7 +1113,7 @@ internal class GenerationCoordinator(
                                         }
                                     }
                                 }
-                                if (BuildConfig.DEBUG) Log.d(ChatViewModel.TAG, "Received chunk: $chunk")
+                                if (BuildConfig.DEBUG && ChatViewModel.VERBOSE_STREAM_LOG) Log.d(ChatViewModel.TAG, "Received chunk: $chunk")
                             }
                         } finally {
                             generationEndAtMs = SystemClock.elapsedRealtime()

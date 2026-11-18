@@ -172,6 +172,11 @@ struct NezumiLlamaCtx
     int32_t last_prompt_media_tokens = 0; // うち画像・音声のトークン数
     bool context_shift_enabled = true;
 
+    // ---- 計測用 (PERF ログ) ----
+    std::vector<llama_token> perf_prev_prompt_tokens; // 直前の nativeComplete のプロンプトトークン
+    std::chrono::steady_clock::time_point perf_t0{};
+    bool perf_first_token_logged = false;
+
     // 要求バックエンドと実際に使われたバックエンド（フォールバック検知用）。
     std::string requested_gpu_backend = "CPU";
     std::string actual_gpu_backend = "CPU";
@@ -490,6 +495,13 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
         }
 
         llama_token token = common_sampler_sample(nc->sampler, nc->ctx, /* idx */ -1);
+        if (!nc->perf_first_token_logged && nc->perf_t0 != std::chrono::steady_clock::time_point{})
+        {
+            nc->perf_first_token_logged = true;
+            LOGI("PERF|native|first_token_ms=%.1f|n_past=%d",
+                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - nc->perf_t0).count(),
+                 nc->n_past);
+        }
         if (i < 3)
         {
             NEZUMI_DIAG("DIAG|pos|gen|step=%d|n_past=%d", i, nc->n_past);
@@ -1278,6 +1290,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         return env->NewStringUTF("");
 
     nc->interrupted.store(false, std::memory_order_release);
+    nc->perf_t0 = std::chrono::steady_clock::now();
+    nc->perf_first_token_logged = false;
 
     const char *prompt = env->GetStringUTFChars(j_prompt, nullptr);
     std::string prompt_str(prompt);
@@ -1298,6 +1312,15 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
     // テキストのみなのでメディアトークンは 0。
     nc->last_prompt_tokens = n_tokens;
     nc->last_prompt_media_tokens = 0;
+
+    // ---- PERF: トークナイズ時間と、前回プロンプトとの共通接頭辞長 (ログ用) ----
+    const auto perf_tok_done = std::chrono::steady_clock::now();
+    const int perf_n_past_before = nc->n_past;
+    size_t perf_common = 0;
+    while (perf_common < nc->perf_prev_prompt_tokens.size() && perf_common < tokens.size() &&
+           nc->perf_prev_prompt_tokens[perf_common] == tokens[perf_common])
+        ++perf_common;
+    nc->perf_prev_prompt_tokens = tokens;
 
     // プロンプトがコンテキストに収まらない場合は先にシフト/クリア
     if (nc->n_past + n_tokens > nc->n_ctx)
@@ -1334,6 +1357,12 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         }
         nc->n_past += chunk;
     }
+
+    const auto perf_prefill_done = std::chrono::steady_clock::now();
+    LOGI("PERF|native|n_tokens=%d|n_common_prev=%zu|n_past_before=%d|n_past_after_prefill=%d|n_ctx=%d|tokenize_ms=%.1f|prefill_ms=%.1f",
+         n_tokens, perf_common, perf_n_past_before, nc->n_past, nc->n_ctx,
+         std::chrono::duration<double, std::milli>(perf_tok_done - nc->perf_t0).count(),
+         std::chrono::duration<double, std::milli>(perf_prefill_done - perf_tok_done).count());
 
     std::string result = generate_loop(env, nc, n_predict, temperature, top_p, top_k,
                                        /* repeat_penalty */ repeat_penalty, stop_words);
