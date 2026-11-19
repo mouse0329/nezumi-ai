@@ -579,6 +579,18 @@ class RemoteEngineConnection(
         service.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson, reasoningEffort, cb)
     }
 
+    suspend fun formatChatSingle(
+        pastMessagesJson: String,
+        newRole: String,
+        newContent: String,
+        addGenerationPrompt: Boolean = true,
+        chatTemplate: String? = null
+    ): String = awaitString("formatChatSingle") { service, cb ->
+        service.formatChatSingle(
+            pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate, cb
+        )
+    }
+
     /**
      * @return {"content":..., "reasoning_content":...} 形式の JSON 文字列。
      * 失敗時・テンプレ未適用時は null。

@@ -792,6 +792,28 @@ class GgufInferenceEngine(
         ))
     }
 
+    /**
+     * llama.cpp common_chat_format_single 相当。
+     * multi-turn で差分だけ nativeComplete に渡し Path A (append) にする。
+     */
+    suspend fun formatChatSingle(
+        pastMessagesJson: String,
+        newRole: String,
+        newContent: String,
+        addGenerationPrompt: Boolean = true,
+        chatTemplate: String? = null
+    ): String = withContext(Dispatchers.IO) {
+        val context = llamaCppCtx ?: return@withContext ""
+        context.formatChatSingle(
+            pastMessagesJson = pastMessagesJson,
+            newRole = newRole,
+            newContent = newContent,
+            addGenerationPrompt = addGenerationPrompt,
+            useJinja = true,
+            chatTemplate = chatTemplate
+        )
+    }
+
     private fun normalizeAssistantGenerationPrompt(prompt: String): String {
         if (prompt.isEmpty()) return prompt
         val markers = listOf(

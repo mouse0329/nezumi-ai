@@ -235,6 +235,17 @@ class LiteRtEngineService : Service() {
             callback?.onResult("")
         }
 
+        override fun formatChatSingle(
+            pastMessagesJson: String?,
+            newRole: String?,
+            newContent: String?,
+            addGenerationPrompt: Boolean,
+            chatTemplate: String?,
+            callback: IRemoteStringCallback?
+        ) {
+            callback?.onResult("")
+        }
+
         override fun parseWithGgufChatTemplate(
             output: String?,
             isPartial: Boolean,

@@ -66,6 +66,14 @@ interface IRemoteInferenceEngine {
                                      boolean enableThinking, String toolsJson,
                                      String reasoningEffort,
                                      IRemoteStringCallback callback);
+    /**
+     * llama.cpp common_chat_format_single 相当。
+     * past messages + 新規1通の差分文字列を返す（KV Path A 用）。
+     * chatTemplate 空なら GGUF 内蔵。
+     */
+    void formatChatSingle(String pastMessagesJson, String newRole, String newContent,
+                          boolean addGenerationPrompt, String chatTemplate,
+                          IRemoteStringCallback callback);
     /** parseGgufChatOutput の結果を {"content":..., "reasoning_content":...} JSON で返す。 */
     void parseWithGgufChatTemplate(String output, boolean isPartial,
                                    IRemoteStringCallback callback);

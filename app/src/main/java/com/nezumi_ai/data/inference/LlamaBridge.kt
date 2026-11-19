@@ -243,6 +243,21 @@ object LlamaBridge {
         addGenerationPrompt: Boolean
     ): String
 
+    /**
+     * llama.cpp common_chat_format_single 相当。
+     * past messages + 新規1通から差分文字列だけ返す（hybrid 向け Path A 用）。
+     * @param chatTemplate 空なら GGUF 内蔵。非空なら明示 Jinja。
+     */
+    external fun nativeFormatChatSingle(
+        ctx: Long,
+        pastMessagesJson: String,
+        newRole: String,
+        newContent: String,
+        addGenerationPrompt: Boolean,
+        useJinja: Boolean,
+        chatTemplate: String?
+    ): String
+
     /** GGUF チャットテンプレートが利用可能かどうか。 */
     external fun nativeHasGgufChatTemplate(ctx: Long): Boolean
     external fun nativeHasExplicitChatTemplate(ctx: Long): Boolean

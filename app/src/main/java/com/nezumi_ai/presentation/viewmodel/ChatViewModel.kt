@@ -2145,6 +2145,13 @@ class ChatViewModel(
     internal data class AssistantVariantSpec(val parentUserMessageId: Long, val variantIndex: Int)
     internal var _pendingAssistantVariantSpec: AssistantVariantSpec? = null
 
+    /**
+     * GGUF KV Path A 用。同一 session で formatChatSingle に寄せるため、
+     * 前回フル render したメッセージ本数を覚える。
+     */
+    @Volatile private var ggufKvCacheSessionId: Long? = null
+    @Volatile private var ggufKvCacheMsgCount: Int = 0
+
     private suspend fun revokePromptFromMessageInternal(
         sessionId: Long,
         promptMessageId: Long,
@@ -2997,15 +3004,92 @@ class ChatViewModel(
         val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
         // Tool calling should not suppress GGUF thinking directives such as Qwen /think.
         val enableThinkingForPrompt = config.enableThinking
-        val fullPrompt = buildPromptFromMessages(
-            messages = messages,
-            isGgufEngine = isGgufEngine,
-            engineModelName = engineModelName,
-            enableThinking = enableThinkingForPrompt,
-            enableToolCalling = config.enableToolCalling,
-            currentTurnMessageId = currentTurnMessageId,
-            memoryBlock = memoryBlock
-        )
+        // llama.cpp common_chat_format_single に寄せる:
+        // 同一 session・ツール無し・末尾が user で、前回よりメッセージが増えているとき差分だけ渡す。
+        // 1ターン目は user のみ (count=1)、2ターン目は user+assistant+user (count=3) なので、
+        // +1 固定では一致しない。
+        val canFormatSingle = isGgufEngine &&
+            !config.enableToolCalling &&
+            regeneratingParentId == null &&
+            ggufKvCacheSessionId == sessionId &&
+            ggufKvCacheMsgCount > 0 &&
+            messages.size > ggufKvCacheMsgCount &&
+            messages.lastOrNull()?.role == "user" &&
+            messages.none { !it.imageUri.isNullOrEmpty() }
+        if (isGgufEngine) {
+            Log.d(
+                TAG,
+                "PROMPT_BUILD: formatSingle check session=$sessionId cacheSess=$ggufKvCacheSessionId " +
+                    "cacheCount=$ggufKvCacheMsgCount msgCount=${messages.size} " +
+                    "can=$canFormatSingle tools=${config.enableToolCalling}"
+            )
+        }
+        val fullPrompt = if (canFormatSingle) {
+            val pastMsgs = messages.dropLast(1)
+            val lastUser = messages.last()
+            val pastJson = buildGgufOpenAiPayloadJson(
+                messages = pastMsgs,
+                systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock),
+                sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
+            )
+            val userTemplate = runCatching {
+                PromptTemplateStore.resolveTemplate(appContext, engineModelName)
+            }.getOrNull()
+            val suffix = runCatching {
+                requireModelManager().formatGgufChatSingle(
+                    pastMessagesJson = pastJson,
+                    newRole = "user",
+                    newContent = makeSanitizer(isGgufEngine, currentTurnMessageId)(lastUser),
+                    addGenerationPrompt = true,
+                    chatTemplate = userTemplate
+                )
+            }.getOrNull()
+            if (!suffix.isNullOrBlank()) {
+                Log.i(
+                    TAG,
+                    "PROMPT_BUILD: formatChatSingle Path A suffixLen=${suffix.length} " +
+                        "pastMsgs=${pastMsgs.size} session=$sessionId"
+                )
+                ggufKvCacheMsgCount = messages.size
+                suffix
+            } else {
+                Log.w(TAG, "PROMPT_BUILD: formatChatSingle empty, full render fallback")
+                ggufKvCacheSessionId = null
+                ggufKvCacheMsgCount = 0
+                buildPromptFromMessages(
+                    messages = messages,
+                    isGgufEngine = isGgufEngine,
+                    engineModelName = engineModelName,
+                    enableThinking = enableThinkingForPrompt,
+                    enableToolCalling = config.enableToolCalling,
+                    currentTurnMessageId = currentTurnMessageId,
+                    memoryBlock = memoryBlock
+                ).also {
+                    if (isGgufEngine) {
+                        ggufKvCacheSessionId = sessionId
+                        ggufKvCacheMsgCount = messages.size
+                    }
+                }
+            }
+        } else {
+            buildPromptFromMessages(
+                messages = messages,
+                isGgufEngine = isGgufEngine,
+                engineModelName = engineModelName,
+                enableThinking = enableThinkingForPrompt,
+                enableToolCalling = config.enableToolCalling,
+                currentTurnMessageId = currentTurnMessageId,
+                memoryBlock = memoryBlock
+            ).also {
+                if (isGgufEngine && !config.enableToolCalling && regeneratingParentId == null) {
+                    ggufKvCacheSessionId = sessionId
+                    ggufKvCacheMsgCount = messages.size
+                } else {
+                    ggufKvCacheSessionId = null
+                    ggufKvCacheMsgCount = 0
+                }
+            }
+        }
 
         // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
         val messagesWithThinking = messages.filter { !it.thinkingContent.isNullOrEmpty() }
@@ -3622,6 +3706,27 @@ class ChatViewModel(
 
     private fun shouldExcludeFromModelContext(msg: MessageEntity): Boolean =
         promptBuilding.shouldExcludeFromModelContext(msg)
+
+    /** OpenAI 互換 messages JSON（system + 履歴）。formatChatSingle の past 用。 */
+    private fun buildGgufOpenAiPayloadJson(
+        messages: List<MessageEntity>,
+        systemPrompt: String,
+        sanitizer: (MessageEntity) -> String
+    ): String {
+        val payload = org.json.JSONArray()
+        val finalSystem = systemPrompt.trim()
+        if (finalSystem.isNotBlank()) {
+            payload.put(org.json.JSONObject().put("role", "system").put("content", finalSystem))
+        }
+        messages.forEach { message ->
+            val content = sanitizer(message)
+            if (content.isNotBlank()) {
+                val role = if (message.role == "assistant") "assistant" else "user"
+                payload.put(org.json.JSONObject().put("role", role).put("content", content))
+            }
+        }
+        return payload.toString()
+    }
 
     private suspend fun buildGgufPromptFromMessages(
         messages: List<MessageEntity>,

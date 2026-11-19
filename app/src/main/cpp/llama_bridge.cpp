@@ -17,7 +17,7 @@
  *   - トークンストリーミングコールバック (nativeSetTokenCallback)
  *   - 高レベル補完 (nativeComplete / nativeCompleteWithMedia / nativeInterrupt / nativeClearInterrupt)
  *   - チャットテンプレート (nativeApplyGgufChatTemplate / nativeApplyJinjaChatTemplate /
- *     nativeHasGgufChatTemplate / nativeParseGgufChatOutput)
+ *     nativeFormatChatSingle / nativeHasGgufChatTemplate / nativeParseGgufChatOutput)
  *   - マルチモーダル (mtmd): nativeIsVisionSupported / nativeIsAudioSupported / nativeGetAudioSampleRate
  *   - タイミング統計 (nativeGetLastTimings)
  *   - GPU バックエンド選択 (CPU / OpenCL / Vulkan)
@@ -174,6 +174,9 @@ struct NezumiLlamaCtx
 
     // ---- 計測用 (PERF ログ) ----
     std::vector<llama_token> perf_prev_prompt_tokens; // 直前の nativeComplete のプロンプトトークン
+    // KV 上のトークン列 (prompt + 生成)。Path A (append) 判定用。
+    // llama-cli / common_chat_format_single 前提の「差分だけ足す」運用と組み合わせる。
+    std::vector<llama_token> session_tokens;
     std::chrono::steady_clock::time_point perf_t0{};
     bool perf_first_token_logged = false;
 
@@ -367,6 +370,7 @@ static bool decode_single_token(NezumiLlamaCtx *nc, llama_token token)
     // CLI 相当: clear → add(token, n_past++, 0, true) → process(DECODE)
     nc->batch.clear();
     nc->batch.add(token, nc->n_past++, 0, true);
+    nc->session_tokens.push_back(token);
     const int process_ret = llama_process(nc->ctx, LLAMA_PROCESS_TYPE_DECODE, nc->batch.get());
     if (process_ret != 0)
     {
@@ -390,6 +394,7 @@ static void context_shift(NezumiLlamaCtx *nc)
         LOGW("context_shift: memory does not support shift, clearing KV cache instead");
         llama_memory_clear(mem, false);
         nc->n_past = 0;
+        nc->session_tokens.clear();
         return;
     }
     const int n_keep = 0; // 先頭保護なし（システムプロンプト保持が必要になったら引数化する）
@@ -402,7 +407,9 @@ static void context_shift(NezumiLlamaCtx *nc)
     llama_memory_seq_rm(mem, 0, n_keep, n_keep + n_discard);
     llama_memory_seq_add(mem, 0, n_keep + n_discard, nc->n_past, -n_discard);
     nc->n_past -= n_discard;
-    LOGI("context_shift: discarded %d tokens, n_past=%d", n_discard, nc->n_past);
+    // シフト後は位置と session_tokens の対応が崩れるので追跡を破棄（次は full）
+    nc->session_tokens.clear();
+    LOGI("context_shift: discarded %d tokens, n_past=%d (session_tokens cleared)", n_discard, nc->n_past);
 }
 
 // llama.cpp CLI (common/sampling.cpp) の common_sampler を組み立てる。
@@ -1083,7 +1090,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaClearKvCache(
         return;
     llama_memory_clear(llama_get_memory(nc->ctx), true);
     nc->n_past = 0; // 位置カウンタもリセット
-    LOGI("llamaClearKvCache: done (n_past reset to 0)");
+    nc->session_tokens.clear();
+    nc->perf_prev_prompt_tokens.clear();
+    LOGI("llamaClearKvCache: done (n_past reset to 0, session_tokens cleared)");
 }
 
 // ─── 推論（低レベルプリミティブ） ─────────────────────────────────
@@ -1313,33 +1322,109 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
     nc->last_prompt_tokens = n_tokens;
     nc->last_prompt_media_tokens = 0;
 
-    // ---- PERF: トークナイズ時間と、前回プロンプトとの共通接頭辞長 (ログ用) ----
+    // ---- PERF + prompt cache (llama-cli 流: 共通接頭辞は再利用、差分だけ eval) ----
     const auto perf_tok_done = std::chrono::steady_clock::now();
     const int perf_n_past_before = nc->n_past;
-    size_t perf_common = 0;
-    while (perf_common < nc->perf_prev_prompt_tokens.size() && perf_common < tokens.size() &&
-           nc->perf_prev_prompt_tokens[perf_common] == tokens[perf_common])
-        ++perf_common;
     nc->perf_prev_prompt_tokens = tokens;
 
+    // session と n_past の不整合は追跡不能 → フルクリア
+    if (!nc->session_tokens.empty() &&
+        static_cast<int>(nc->session_tokens.size()) != nc->n_past)
+    {
+        LOGW("nativeComplete: session_tokens(%zu) != n_past(%d), clearing",
+             nc->session_tokens.size(), nc->n_past);
+        llama_memory_clear(llama_get_memory(nc->ctx), true);
+        nc->n_past = 0;
+        nc->session_tokens.clear();
+    }
+
+    size_t common = 0;
+    while (common < nc->session_tokens.size() && common < tokens.size() &&
+           nc->session_tokens[common] == tokens[common])
+        ++common;
+
+    const char *cache_path = "full";
+    int prefill_from = 0;
+
+    if (common == static_cast<size_t>(nc->n_past) && common <= tokens.size())
+    {
+        // Path A: 入力が session の接頭辞一致（フル prompt 再送時の差分）。hybrid OK
+        cache_path = (common == tokens.size()) ? "exact" : "append";
+        prefill_from = static_cast<int>(common);
+    }
+    else if (common > 0 && common < static_cast<size_t>(nc->n_past))
+    {
+        // Path B: 途中まで一致。seq_rm で末尾を落とす（transformer のみ。hybrid は失敗し full へ）
+        llama_memory_t mem = llama_get_memory(nc->ctx);
+        const llama_pos p0 = static_cast<llama_pos>(common);
+        const llama_pos p1 = static_cast<llama_pos>(nc->n_past);
+        if (llama_memory_seq_rm(mem, 0, p0, p1))
+        {
+            nc->n_past = static_cast<int>(common);
+            nc->session_tokens.resize(common);
+            cache_path = "rewind";
+            prefill_from = static_cast<int>(common);
+        }
+        else
+        {
+            LOGW("nativeComplete: seq_rm failed (common=%zu n_past=%d), full clear",
+                 common, perf_n_past_before);
+            llama_memory_clear(mem, true);
+            nc->n_past = 0;
+            nc->session_tokens.clear();
+            cache_path = "full";
+            prefill_from = 0;
+            common = 0;
+        }
+    }
+    else if (common == 0 && nc->n_past > 0 && n_tokens > 0 && n_tokens < nc->n_past)
+    {
+        // formatChatSingle の差分だけが渡されたケース。
+        // 入力は session の接頭辞ではないが、末尾に追記する（hybrid の本命）。
+        cache_path = "append_suffix";
+        prefill_from = 0; // 入力トークンは全部 eval。n_past は維持したまま下で加算
+        // session_tokens は下のループ後に追記で伸ばす
+    }
+    else if (common == 0 && nc->n_past > 0)
+    {
+        // 全文再送とみなし full clear
+        llama_memory_clear(llama_get_memory(nc->ctx), true);
+        nc->n_past = 0;
+        nc->session_tokens.clear();
+        cache_path = "full";
+        prefill_from = 0;
+    }
+
     // プロンプトがコンテキストに収まらない場合は先にシフト/クリア
-    if (nc->n_past + n_tokens > nc->n_ctx)
+    const int n_new = n_tokens - prefill_from;
+    if (nc->n_past + n_new > nc->n_ctx)
     {
         if (nc->context_shift_enabled)
         {
             context_shift(nc);
+            // shift で session 破棄済み → フル prefill
+            prefill_from = 0;
+            cache_path = "full";
+            common = 0;
+            nc->n_past = 0;
         }
-        if (nc->n_past + n_tokens > nc->n_ctx)
+        if (nc->n_past + (n_tokens - prefill_from) > nc->n_ctx)
         {
             LOGW("nativeComplete: prompt does not fit, clearing KV cache (n_past=%d tokens=%d n_ctx=%d)",
                  nc->n_past, n_tokens, nc->n_ctx);
             llama_memory_clear(llama_get_memory(nc->ctx), true);
             nc->n_past = 0;
+            nc->session_tokens.clear();
+            prefill_from = 0;
+            cache_path = "full";
+            common = 0;
         }
     }
 
-    // n_batch ずつ分割してデコード（llama-cli / mtmd-cli と同じ common_batch）
-    for (int i = 0; i < n_tokens; i += nc->n_batch)
+    // n_batch ずつ分割してデコード（差分のみ）
+    // append_suffix: prefill_from=0 でも n_past は維持し、入力トークンを末尾に積む
+    const int n_past_at_prefill_start = nc->n_past;
+    for (int i = prefill_from; i < n_tokens; i += nc->n_batch)
     {
         if (nc->interrupted.load(std::memory_order_acquire))
             break;
@@ -1357,10 +1442,27 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         }
         nc->n_past += chunk;
     }
+    // session_tokens 更新
+    if (std::string(cache_path) == "append_suffix")
+    {
+        nc->session_tokens.resize(n_past_at_prefill_start);
+        const int added = nc->n_past - n_past_at_prefill_start;
+        for (int i = 0; i < added && (prefill_from + i) < n_tokens; ++i)
+            nc->session_tokens.push_back(tokens[prefill_from + i]);
+    }
+    else if (nc->n_past <= n_tokens)
+    {
+        // full / append / rewind: session は今回の prompt 先頭から
+        nc->session_tokens.assign(tokens.begin(), tokens.begin() + nc->n_past);
+    }
+    else
+    {
+        nc->session_tokens.clear();
+    }
 
     const auto perf_prefill_done = std::chrono::steady_clock::now();
-    LOGI("PERF|native|n_tokens=%d|n_common_prev=%zu|n_past_before=%d|n_past_after_prefill=%d|n_ctx=%d|tokenize_ms=%.1f|prefill_ms=%.1f",
-         n_tokens, perf_common, perf_n_past_before, nc->n_past, nc->n_ctx,
+    LOGI("PERF|native|path=%s|n_tokens=%d|n_common=%zu|n_new=%d|n_past_before=%d|n_past_after_prefill=%d|n_ctx=%d|tokenize_ms=%.1f|prefill_ms=%.1f",
+         cache_path, n_tokens, common, n_tokens - prefill_from, perf_n_past_before, nc->n_past, nc->n_ctx,
          std::chrono::duration<double, std::milli>(perf_tok_done - nc->perf_t0).count(),
          std::chrono::duration<double, std::milli>(perf_prefill_done - perf_tok_done).count());
 
@@ -1396,6 +1498,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         return Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
             env, nullptr, j_ctx, j_prompt, n_predict, temperature, top_p, top_k, repeat_penalty, j_stop_words);
     }
+    // メディア経路はチャンク単位で位置が変わるため session 追跡は破棄（次回 text は full）
+    nc->session_tokens.clear();
 
     nc->interrupted.store(false, std::memory_order_release);
 
@@ -1715,6 +1819,83 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
     catch (const std::exception &e)
     {
         LOGE("nativeApplyJinjaChatTemplate: %s", e.what());
+        return env->NewStringUTF("");
+    }
+}
+
+
+// llama.cpp common_chat_format_single の JNI ラッパ。
+// past messages + 1 通の new message から「差分文字列」だけ返す。
+// Path A (append) と組み合わせ、hybrid でも multi-turn の full prefill を避ける。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeFormatChatSingle(
+    JNIEnv *env,
+    jobject /* obj */,
+    jlong j_ctx,
+    jstring j_past_messages_json,
+    jstring j_new_role,
+    jstring j_new_content,
+    jboolean add_generation_prompt,
+    jboolean use_jinja,
+    jstring j_chat_template)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    if (!nc || !nc->model)
+        return env->NewStringUTF("");
+
+    const char *past_c = env->GetStringUTFChars(j_past_messages_json, nullptr);
+    std::string past_json = past_c ? past_c : "[]";
+    if (past_c)
+        env->ReleaseStringUTFChars(j_past_messages_json, past_c);
+
+    const char *role_c = env->GetStringUTFChars(j_new_role, nullptr);
+    std::string new_role = role_c ? role_c : "user";
+    if (role_c)
+        env->ReleaseStringUTFChars(j_new_role, role_c);
+
+    const char *content_c = env->GetStringUTFChars(j_new_content, nullptr);
+    std::string new_content = content_c ? content_c : "";
+    if (content_c)
+        env->ReleaseStringUTFChars(j_new_content, content_c);
+
+    const char *tmpl_c = j_chat_template ? env->GetStringUTFChars(j_chat_template, nullptr) : nullptr;
+    std::string chat_template = tmpl_c ? tmpl_c : "";
+    if (tmpl_c)
+        env->ReleaseStringUTFChars(j_chat_template, tmpl_c);
+
+    std::vector<common_chat_msg> past = parse_messages_json(past_json);
+    common_chat_msg neu;
+    neu.role = std::move(new_role);
+    neu.content = std::move(new_content);
+
+    try
+    {
+        // chat_template 空 → モデル GGUF 内蔵。非空 → 明示 Jinja。
+        common_chat_templates_ptr tmpls;
+        if (chat_template.empty() && nc->chat_templates)
+        {
+            // ロード時テンプレを再利用（所有は nc 側）。一時 init を避けるため apply 用に再 init はするが空 override。
+            tmpls = common_chat_templates_init(nc->model, "");
+        }
+        else
+        {
+            tmpls = common_chat_templates_init(nc->model, chat_template);
+        }
+        if (!tmpls)
+        {
+            LOGE("nativeFormatChatSingle: templates_init failed");
+            return env->NewStringUTF("");
+        }
+
+        std::string suffix = common_chat_format_single(
+            tmpls.get(), past, neu,
+            add_generation_prompt != JNI_FALSE,
+            use_jinja != JNI_FALSE);
+        return utf8_to_jstring(env, suffix);
+    }
+    catch (const std::exception &e)
+    {
+        LOGE("nativeFormatChatSingle: %s", e.what());
         return env->NewStringUTF("");
     }
 }

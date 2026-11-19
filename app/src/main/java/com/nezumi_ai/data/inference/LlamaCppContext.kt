@@ -113,6 +113,21 @@ class LlamaCppContext(
         return LlamaBridge.nativeApplyJinjaChatTemplate(ptr, messagesJson, chatTemplate, toolsJson, enableThinking, reasoningEffort, addGenerationPrompt)
     }
 
+    fun formatChatSingle(
+        pastMessagesJson: String,
+        newRole: String,
+        newContent: String,
+        addGenerationPrompt: Boolean = true,
+        useJinja: Boolean = true,
+        chatTemplate: String? = null
+    ): String {
+        if (ptr == 0L) return ""
+        return LlamaBridge.nativeFormatChatSingle(
+            ptr, pastMessagesJson, newRole, newContent,
+            addGenerationPrompt, useJinja, chatTemplate
+        )
+    }
+
     fun hasGgufChatTemplate(): Boolean = ptr != 0L && LlamaBridge.nativeHasGgufChatTemplate(ptr)
     fun hasExplicitChatTemplate(): Boolean = ptr != 0L && LlamaBridge.nativeHasExplicitChatTemplate(ptr)
 

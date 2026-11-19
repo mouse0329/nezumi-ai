@@ -556,6 +556,23 @@ class ModelManager(
             .takeIf { it.isNotBlank() }
     }
 
+    /**
+     * llama.cpp common_chat_format_single 相当。
+     * multi-turn 差分文字列。失敗・非 GGUF は null。
+     */
+    suspend fun formatGgufChatSingle(
+        pastMessagesJson: String,
+        newRole: String,
+        newContent: String,
+        addGenerationPrompt: Boolean = true,
+        chatTemplate: String? = null
+    ): String? {
+        val engine = activeEngine as? RemoteGgufInferenceEngine ?: return null
+        return engine.formatChatSingle(
+            pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate
+        ).takeIf { it.isNotBlank() }
+    }
+
     /** 現在の GGUF コンテキストにチャットテンプレートが適用済みかどうか。 */
     fun hasGgufChatTemplate(): Boolean =
         (activeEngine as? RemoteGgufInferenceEngine)?.hasGgufChatTemplate() ?: false

@@ -269,6 +269,32 @@ class GgufInferenceService : Service() {
             }
         }
 
+        override fun formatChatSingle(
+            pastMessagesJson: String?,
+            newRole: String?,
+            newContent: String?,
+            addGenerationPrompt: Boolean,
+            chatTemplate: String?,
+            callback: IRemoteStringCallback?
+        ) {
+            if (callback == null) return
+            serviceScope.launch {
+                try {
+                    val result = ggufEngine.formatChatSingle(
+                        pastMessagesJson ?: "[]",
+                        newRole ?: "user",
+                        newContent ?: "",
+                        addGenerationPrompt,
+                        chatTemplate?.takeIf { it.isNotBlank() }
+                    )
+                    callback.onResult(result)
+                } catch (t: Throwable) {
+                    if (t is CancellationException) throw t
+                    callback.onError(t.message ?: "formatChatSingle failed")
+                }
+            }
+        }
+
         override fun parseWithGgufChatTemplate(
             output: String?,
             isPartial: Boolean,

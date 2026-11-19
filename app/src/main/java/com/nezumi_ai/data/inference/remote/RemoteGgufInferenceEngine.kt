@@ -223,6 +223,16 @@ class RemoteGgufInferenceEngine(
         reasoningEffort: String = ""
     ): String = connection.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson, reasoningEffort)
 
+    suspend fun formatChatSingle(
+        pastMessagesJson: String,
+        newRole: String,
+        newContent: String,
+        addGenerationPrompt: Boolean = true,
+        chatTemplate: String? = null
+    ): String = connection.formatChatSingle(
+        pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate
+    )
+
     fun parseWithGgufChatTemplate(
         output: String,
         isPartial: Boolean
