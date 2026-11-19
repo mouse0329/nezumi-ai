@@ -3032,23 +3032,28 @@ class ChatViewModel(
                 systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock),
                 sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
             )
+            // 1ターン目の full 経路と同じテンプレ選択に揃える
+            // (user Jinja が無ければ GGUF 内蔵 = null)
             val userTemplate = runCatching {
                 PromptTemplateStore.resolveTemplate(appContext, engineModelName)
-            }.getOrNull()
+            }.getOrNull()?.takeIf { it.isNotBlank() }
             val suffix = runCatching {
                 requireModelManager().formatGgufChatSingle(
                     pastMessagesJson = pastJson,
                     newRole = "user",
                     newContent = makeSanitizer(isGgufEngine, currentTurnMessageId)(lastUser),
                     addGenerationPrompt = true,
-                    chatTemplate = userTemplate
+                    chatTemplate = userTemplate,
+                    enableThinking = enableThinkingForPrompt
                 )
             }.getOrNull()
             if (!suffix.isNullOrBlank()) {
+                val preview = suffix.replace("\n", "\\n").take(80)
                 Log.i(
                     TAG,
                     "PROMPT_BUILD: formatChatSingle Path A suffixLen=${suffix.length} " +
-                        "pastMsgs=${pastMsgs.size} session=$sessionId"
+                        "pastMsgs=${pastMsgs.size} session=$sessionId thinking=$enableThinkingForPrompt " +
+                        "preview=$preview"
                 )
                 ggufKvCacheMsgCount = messages.size
                 suffix

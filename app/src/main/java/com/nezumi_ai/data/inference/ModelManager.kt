@@ -565,11 +565,12 @@ class ModelManager(
         newRole: String,
         newContent: String,
         addGenerationPrompt: Boolean = true,
-        chatTemplate: String? = null
+        chatTemplate: String? = null,
+        enableThinking: Boolean = false
     ): String? {
         val engine = activeEngine as? RemoteGgufInferenceEngine ?: return null
         return engine.formatChatSingle(
-            pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate
+            pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate, enableThinking
         ).takeIf { it.isNotBlank() }
     }
 

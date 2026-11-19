@@ -1837,7 +1837,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeFormatChatSingle(
     jstring j_new_content,
     jboolean add_generation_prompt,
     jboolean use_jinja,
-    jstring j_chat_template)
+    jstring j_chat_template,
+    jboolean enable_thinking)
 {
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
     if (!nc || !nc->model)
@@ -1870,27 +1871,62 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeFormatChatSingle(
 
     try
     {
-        // chat_template 空 → モデル GGUF 内蔵。非空 → 明示 Jinja。
-        common_chat_templates_ptr tmpls;
+        // フル経路 (nativeApplyGgufChatTemplate) と同じ apply で差分を取る。
+        // common_chat_format_single は enable_thinking を渡せないため、
+        // thinking OFF 時に Qwen が Thinking Process を出し始める不整合が起きる。
+        common_chat_templates *tmpls_raw = nullptr;
+        common_chat_templates_ptr tmpls_owned;
         if (chat_template.empty() && nc->chat_templates)
         {
-            // ロード時テンプレを再利用（所有は nc 側）。一時 init を避けるため apply 用に再 init はするが空 override。
-            tmpls = common_chat_templates_init(nc->model, "");
+            tmpls_raw = nc->chat_templates;
         }
         else
         {
-            tmpls = common_chat_templates_init(nc->model, chat_template);
+            tmpls_owned = common_chat_templates_init(nc->model, chat_template);
+            tmpls_raw = tmpls_owned.get();
         }
-        if (!tmpls)
+        if (!tmpls_raw)
         {
             LOGE("nativeFormatChatSingle: templates_init failed");
             return env->NewStringUTF("");
         }
 
-        std::string suffix = common_chat_format_single(
-            tmpls.get(), past, neu,
-            add_generation_prompt != JNI_FALSE,
-            use_jinja != JNI_FALSE);
+        common_chat_templates_inputs inputs_past;
+        inputs_past.messages = past;
+        inputs_past.add_generation_prompt = false;
+        inputs_past.use_jinja = use_jinja != JNI_FALSE;
+        inputs_past.enable_thinking = enable_thinking != JNI_FALSE;
+        inputs_past.now = std::chrono::system_clock::now();
+        common_chat_params params_past = common_chat_templates_apply(tmpls_raw, inputs_past);
+        const std::string fmt_past = params_past.prompt.str();
+
+        std::vector<common_chat_msg> all = past;
+        all.push_back(neu);
+        common_chat_templates_inputs inputs_all;
+        inputs_all.messages = all;
+        inputs_all.add_generation_prompt = add_generation_prompt != JNI_FALSE;
+        inputs_all.use_jinja = use_jinja != JNI_FALSE;
+        inputs_all.enable_thinking = enable_thinking != JNI_FALSE;
+        inputs_all.now = std::chrono::system_clock::now();
+        common_chat_params params_all = common_chat_templates_apply(tmpls_raw, inputs_all);
+        const std::string fmt_all = params_all.prompt.str();
+
+        std::string suffix;
+        if (fmt_all.size() >= fmt_past.size() &&
+            fmt_all.compare(0, fmt_past.size(), fmt_past) == 0)
+        {
+            suffix = fmt_all.substr(fmt_past.size());
+        }
+        else
+        {
+            // プレフィックス不一致時は full を返すと Path A が壊れるので空に倒す
+            LOGE("nativeFormatChatSingle: prefix mismatch past=%zu all=%zu",
+                 fmt_past.size(), fmt_all.size());
+            return env->NewStringUTF("");
+        }
+
+        LOGI("nativeFormatChatSingle: thinking=%d suffix_len=%zu past_len=%zu all_len=%zu",
+             enable_thinking != JNI_FALSE, suffix.size(), fmt_past.size(), fmt_all.size());
         return utf8_to_jstring(env, suffix);
     }
     catch (const std::exception &e)

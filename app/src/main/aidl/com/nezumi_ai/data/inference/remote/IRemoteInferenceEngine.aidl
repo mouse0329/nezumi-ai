@@ -73,6 +73,7 @@ interface IRemoteInferenceEngine {
      */
     void formatChatSingle(String pastMessagesJson, String newRole, String newContent,
                           boolean addGenerationPrompt, String chatTemplate,
+                          boolean enableThinking,
                           IRemoteStringCallback callback);
     /** parseGgufChatOutput の結果を {"content":..., "reasoning_content":...} JSON で返す。 */
     void parseWithGgufChatTemplate(String output, boolean isPartial,

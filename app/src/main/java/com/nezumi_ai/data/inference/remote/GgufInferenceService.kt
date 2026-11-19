@@ -275,6 +275,7 @@ class GgufInferenceService : Service() {
             newContent: String?,
             addGenerationPrompt: Boolean,
             chatTemplate: String?,
+            enableThinking: Boolean,
             callback: IRemoteStringCallback?
         ) {
             if (callback == null) return
@@ -285,7 +286,8 @@ class GgufInferenceService : Service() {
                         newRole ?: "user",
                         newContent ?: "",
                         addGenerationPrompt,
-                        chatTemplate?.takeIf { it.isNotBlank() }
+                        chatTemplate?.takeIf { it.isNotBlank() },
+                        enableThinking
                     )
                     callback.onResult(result)
                 } catch (t: Throwable) {

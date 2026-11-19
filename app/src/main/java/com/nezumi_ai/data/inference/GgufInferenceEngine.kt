@@ -801,7 +801,8 @@ class GgufInferenceEngine(
         newRole: String,
         newContent: String,
         addGenerationPrompt: Boolean = true,
-        chatTemplate: String? = null
+        chatTemplate: String? = null,
+        enableThinking: Boolean = false
     ): String = withContext(Dispatchers.IO) {
         val context = llamaCppCtx ?: return@withContext ""
         context.formatChatSingle(
@@ -810,7 +811,8 @@ class GgufInferenceEngine(
             newContent = newContent,
             addGenerationPrompt = addGenerationPrompt,
             useJinja = true,
-            chatTemplate = chatTemplate
+            chatTemplate = chatTemplate,
+            enableThinking = enableThinking
         )
     }
 

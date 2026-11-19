@@ -584,10 +584,11 @@ class RemoteEngineConnection(
         newRole: String,
         newContent: String,
         addGenerationPrompt: Boolean = true,
-        chatTemplate: String? = null
+        chatTemplate: String? = null,
+        enableThinking: Boolean = false
     ): String = awaitString("formatChatSingle") { service, cb ->
         service.formatChatSingle(
-            pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate, cb
+            pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate, enableThinking, cb
         )
     }
 

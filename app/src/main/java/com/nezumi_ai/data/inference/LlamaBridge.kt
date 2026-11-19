@@ -255,7 +255,8 @@ object LlamaBridge {
         newContent: String,
         addGenerationPrompt: Boolean,
         useJinja: Boolean,
-        chatTemplate: String?
+        chatTemplate: String?,
+        enableThinking: Boolean
     ): String
 
     /** GGUF チャットテンプレートが利用可能かどうか。 */

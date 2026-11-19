@@ -119,12 +119,13 @@ class LlamaCppContext(
         newContent: String,
         addGenerationPrompt: Boolean = true,
         useJinja: Boolean = true,
-        chatTemplate: String? = null
+        chatTemplate: String? = null,
+        enableThinking: Boolean = false
     ): String {
         if (ptr == 0L) return ""
         return LlamaBridge.nativeFormatChatSingle(
             ptr, pastMessagesJson, newRole, newContent,
-            addGenerationPrompt, useJinja, chatTemplate
+            addGenerationPrompt, useJinja, chatTemplate, enableThinking
         )
     }
 

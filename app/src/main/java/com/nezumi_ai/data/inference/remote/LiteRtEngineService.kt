@@ -241,6 +241,7 @@ class LiteRtEngineService : Service() {
             newContent: String?,
             addGenerationPrompt: Boolean,
             chatTemplate: String?,
+            enableThinking: Boolean,
             callback: IRemoteStringCallback?
         ) {
             callback?.onResult("")

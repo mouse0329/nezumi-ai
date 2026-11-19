@@ -228,9 +228,10 @@ class RemoteGgufInferenceEngine(
         newRole: String,
         newContent: String,
         addGenerationPrompt: Boolean = true,
-        chatTemplate: String? = null
+        chatTemplate: String? = null,
+        enableThinking: Boolean = false
     ): String = connection.formatChatSingle(
-        pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate
+        pastMessagesJson, newRole, newContent, addGenerationPrompt, chatTemplate, enableThinking
     )
 
     fun parseWithGgufChatTemplate(
