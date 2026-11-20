@@ -341,7 +341,7 @@ class SettingsRepository(
         maxTopK: Int,
         maxTokens: Int,
         cloudMaxTokens: Int,
-        contextWindow: Int = 4096,
+        contextWindow: Int = 2048,
         backendType: String,
         backendTargetModel: String = MODEL_E2B
     ) {

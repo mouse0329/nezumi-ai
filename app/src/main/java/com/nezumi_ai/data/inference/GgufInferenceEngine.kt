@@ -343,7 +343,10 @@ class GgufInferenceEngine(
                 }
                 val nativeSettings = resolveNativeGenerationSettings(modelPath, normalized, appContext)
                 val llamaPrefs = appContext
-                val threadsBatch = PreferencesHelper.getLlamaCppThreadsBatch(llamaPrefs).let { if (it > 0) it else optimalThreads }
+                // prefill 用バッチスレッド: 未設定時は decode スレッドより少し多め（上限 6）
+                val threadsBatch = PreferencesHelper.getLlamaCppThreadsBatch(llamaPrefs).let {
+                    if (it > 0) it else (optimalThreads + 2).coerceAtMost(6).coerceAtLeast(optimalThreads)
+                }
                 val seed = PreferencesHelper.getLlamaCppSeed(llamaPrefs)
                 val repeatLastN = PreferencesHelper.getLlamaCppRepeatLastN(llamaPrefs)
                 val useMmap = PreferencesHelper.getLlamaCppUseMmap(llamaPrefs)
@@ -794,7 +797,9 @@ class GgufInferenceEngine(
 
     /**
      * llama.cpp common_chat_format_single 相当。
-     * multi-turn で差分だけ nativeComplete に渡し Path A (append) にする。
+     * multi-turn で差分だけ nativeComplete に渡し Path A / append_suffix にする。
+     * hybrid/recurrent モデルは partial seq_rm が失敗するため、フルプロンプト再送より
+     * この差分経路が必須（llama.cpp #22534 / prefix caching の知見）。
      */
     suspend fun formatChatSingle(
         pastMessagesJson: String,

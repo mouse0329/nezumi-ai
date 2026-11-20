@@ -35,6 +35,8 @@
 #include <exception>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "llama.h"
@@ -177,6 +179,19 @@ struct NezumiLlamaCtx
     // KV 上のトークン列 (prompt + 生成)。Path A (append) 判定用。
     // llama-cli / common_chat_format_single 前提の「差分だけ足す」運用と組み合わせる。
     std::vector<llama_token> session_tokens;
+    // true のときだけ session_tokens が n_past と 1:1 で信頼できる (text Path A/B)。
+    // media 経路後は false にし、部分トークン追跡による誤フルクリアを防ぐ。
+    bool session_prefix_valid = false;
+    // hybrid / recurrent: partial seq_rm が原理的に失敗しやすい (llama.cpp #22534 等)
+    bool is_hybrid_memory = false;
+    // 直近 prefill 完了時点の n_past。キャンセル時はここまで巻き戻し、生成途中トークンだけ捨てる。
+    int post_prefill_n_past = 0;
+    // 明示 Jinja テンプレートのコンパイル結果キャッシュ（毎回 common_chat_templates_init しない）
+    std::string explicit_chat_template_src;
+    common_chat_templates *explicit_chat_templates = nullptr;
+    // formatChatSingle 用: past 側 apply 結果キャッシュ（多ターンで二重 apply を削減）
+    std::string cached_fmt_past_key;
+    std::string cached_fmt_past;
     std::chrono::steady_clock::time_point perf_t0{};
     bool perf_first_token_logged = false;
 
@@ -370,7 +385,8 @@ static bool decode_single_token(NezumiLlamaCtx *nc, llama_token token)
     // CLI 相当: clear → add(token, n_past++, 0, true) → process(DECODE)
     nc->batch.clear();
     nc->batch.add(token, nc->n_past++, 0, true);
-    nc->session_tokens.push_back(token);
+    if (nc->session_prefix_valid)
+        nc->session_tokens.push_back(token);
     const int process_ret = llama_process(nc->ctx, LLAMA_PROCESS_TYPE_DECODE, nc->batch.get());
     if (process_ret != 0)
     {
@@ -409,7 +425,69 @@ static void context_shift(NezumiLlamaCtx *nc)
     nc->n_past -= n_discard;
     // シフト後は位置と session_tokens の対応が崩れるので追跡を破棄（次は full）
     nc->session_tokens.clear();
+    nc->session_prefix_valid = false;
     LOGI("context_shift: discarded %d tokens, n_past=%d (session_tokens cleared)", n_discard, nc->n_past);
+}
+
+// 生成途中のトークンだけ捨てて、prefill 済み位置へ巻き戻す。
+// seq_rm 失敗時はフルクリア（再利用不能な中途半端状態を残さない）。
+static void rewind_kv_to(NezumiLlamaCtx *nc, int target_n_past)
+{
+    if (!nc || !nc->ctx)
+        return;
+    if (target_n_past < 0)
+        target_n_past = 0;
+    if (target_n_past >= nc->n_past)
+        return;
+    llama_memory_t mem = llama_get_memory(nc->ctx);
+    const llama_pos p0 = static_cast<llama_pos>(target_n_past);
+    if (llama_memory_seq_rm(mem, 0, p0, -1))
+    {
+        nc->n_past = target_n_past;
+        if (nc->session_prefix_valid &&
+            static_cast<int>(nc->session_tokens.size()) > target_n_past)
+            nc->session_tokens.resize(static_cast<size_t>(target_n_past));
+        LOGI("rewind_kv_to: n_past=%d session_tokens=%zu", nc->n_past, nc->session_tokens.size());
+        return;
+    }
+    // hybrid/recurrent では部分削除が常に失敗しうる。プロンプト接頭辞まで失うのは痛いが、
+    // n_past だけ書き換えて KV を残すと logits 位置が壊れるため clear する。
+    LOGW("rewind_kv_to: seq_rm failed (target=%d n_past=%d hybrid=%d), full clear",
+         target_n_past, nc->n_past, nc->is_hybrid_memory ? 1 : 0);
+    llama_memory_clear(mem, true);
+    nc->n_past = 0;
+    nc->session_tokens.clear();
+    nc->session_prefix_valid = false;
+    nc->post_prefill_n_past = 0;
+}
+
+// 明示テンプレート文字列が同じならコンパイル結果を再利用する。
+static common_chat_templates *get_or_init_explicit_templates(NezumiLlamaCtx *nc, const std::string &chat_template)
+{
+    if (!nc || !nc->model)
+        return nullptr;
+    if (chat_template.empty())
+        return nc->chat_templates;
+    if (nc->explicit_chat_templates && nc->explicit_chat_template_src == chat_template)
+        return nc->explicit_chat_templates;
+    if (nc->explicit_chat_templates)
+    {
+        common_chat_templates_free(nc->explicit_chat_templates);
+        nc->explicit_chat_templates = nullptr;
+        nc->explicit_chat_template_src.clear();
+    }
+    common_chat_templates_ptr owned = common_chat_templates_init(nc->model, chat_template);
+    if (!owned)
+    {
+        LOGE("get_or_init_explicit_templates: init failed");
+        return nullptr;
+    }
+    nc->explicit_chat_templates = owned.release();
+    nc->explicit_chat_template_src = chat_template;
+    nc->cached_fmt_past_key.clear();
+    nc->cached_fmt_past.clear();
+    LOGI("get_or_init_explicit_templates: compiled (%zu chars)", chat_template.size());
+    return nc->explicit_chat_templates;
 }
 
 // llama.cpp CLI (common/sampling.cpp) の common_sampler を組み立てる。
@@ -482,6 +560,8 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
         if (nc->interrupted.load(std::memory_order_acquire))
         {
             LOGI("generate_loop: interrupted");
+            if (nc->post_prefill_n_past >= 0 && nc->post_prefill_n_past < nc->n_past)
+                rewind_kv_to(nc, nc->post_prefill_n_past);
             break;
         }
 
@@ -522,11 +602,6 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
         common_sampler_accept(nc->sampler, token, true);
 
         std::string piece = token_to_piece(nc, token);
-        // 最初の数トークンだけ生 ID と文字列を出して、画像後の生成崩れを確認する
-        if (result.size() < 64)
-        {
-            LOGI("generate_loop: early token id=%d piece='%s' n_past=%d", token, piece.c_str(), nc->n_past);
-        }
         result += piece;
 
         // stop word 判定（複数トークンに跨る場合を考慮してローリングバッファで判定）
@@ -583,19 +658,27 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
             // まで進めると「あ」の先頭 2 バイトが欠落したまま次トークンの継続バイトだけ
             // が届き、ストリーミング中の日本語だけ欠ける (最終 result は完全)。
             safe_end = utf8_complete_size(result.data(), safe_end);
+            // JNI CallVoidMethod はトークンごとに重い。数トークン分まとめて渡す
+            // （ストリーム体感はほぼ同じで decode を阻害しにくい）。
             if (safe_end > streamed_size)
             {
-                const std::string safe_piece = result.substr(streamed_size, safe_end - streamed_size);
-                streamed_size = safe_end;
-                jstring j_piece = utf8_to_jstring(env, safe_piece);
-                env->CallVoidMethod(nc->token_callback, nc->on_token_mid, j_piece);
-                env->DeleteLocalRef(j_piece);
-                if (env->ExceptionCheck())
+                const size_t pending_bytes = safe_end - streamed_size;
+                const bool force_flush = hit || (i + 1 >= n_predict);
+                // ~3 トークン相当 or 16B 超 or 終端で flush
+                if (force_flush || pending_bytes >= 16 || (i % 3) == 2)
                 {
-                    LOGE("generate_loop: exception in token callback, aborting");
-                    env->ExceptionDescribe();
-                    env->ExceptionClear();
-                    break;
+                    const std::string safe_piece = result.substr(streamed_size, pending_bytes);
+                    streamed_size = safe_end;
+                    jstring j_piece = utf8_to_jstring(env, safe_piece);
+                    env->CallVoidMethod(nc->token_callback, nc->on_token_mid, j_piece);
+                    env->DeleteLocalRef(j_piece);
+                    if (env->ExceptionCheck())
+                    {
+                        LOGE("generate_loop: exception in token callback, aborting");
+                        env->ExceptionDescribe();
+                        env->ExceptionClear();
+                        break;
+                    }
                 }
             }
         }
@@ -777,8 +860,23 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     cparams.n_ctx = static_cast<uint32_t>(n_ctx);
     cparams.n_batch = static_cast<uint32_t>(n_batch > 0 ? n_batch : 1024);
     cparams.n_ubatch = static_cast<uint32_t>(n_ubatch > 0 ? n_ubatch : cparams.n_batch);
-    cparams.n_threads = static_cast<int32_t>(n_threads);
-    cparams.n_threads_batch = static_cast<int32_t>(n_threads_batch > 0 ? n_threads_batch : n_threads);
+    // decode はメモリ帯域律速でスレッド過多は逆効果（big.LITTLE で 2–4 が定石）。
+    // prefill (n_threads_batch) は計算律速なので多めを許可。
+    {
+        int32_t thr = static_cast<int32_t>(n_threads > 0 ? n_threads : 4);
+        if (thr > 4)
+        {
+            LOGW("llamaInit: n_threads %d -> 4 (decode is bandwidth-bound on mobile)", thr);
+            thr = 4;
+        }
+        cparams.n_threads = thr;
+        int32_t thr_b = static_cast<int32_t>(n_threads_batch > 0 ? n_threads_batch : thr);
+        if (thr_b < thr)
+            thr_b = thr;
+        if (thr_b > 6)
+            thr_b = 6;
+        cparams.n_threads_batch = thr_b;
+    }
     cparams.offload_kqv = offload_kqv == JNI_TRUE;
     auto cache_type_from_name = [](const std::string &name)
     {
@@ -930,6 +1028,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
 
     // GGUF 埋め込みチャットテンプレートを初期化（失敗しても推論自体は続行可能）
     nc->chat_templates = common_chat_templates_init(model, /* chat_template_override */ "").release();
+    nc->is_hybrid_memory = llama_model_is_hybrid(model) || llama_model_is_recurrent(model);
+    if (nc->is_hybrid_memory)
+        LOGI("llamaInit: hybrid/recurrent memory — prefer Path A / append_suffix; avoid Path B full clear");
     if (!nc->chat_templates)
     {
         LOGW("llamaInit: no usable chat template in GGUF");
@@ -1005,6 +1106,12 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaFree(
     {
         common_chat_templates_free(nc->chat_templates);
         nc->chat_templates = nullptr;
+    }
+    if (nc->explicit_chat_templates)
+    {
+        common_chat_templates_free(nc->explicit_chat_templates);
+        nc->explicit_chat_templates = nullptr;
+        nc->explicit_chat_template_src.clear();
     }
     if (nc->mtmd_ctx)
     {
@@ -1090,8 +1197,12 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaClearKvCache(
         return;
     llama_memory_clear(llama_get_memory(nc->ctx), true);
     nc->n_past = 0; // 位置カウンタもリセット
+    nc->post_prefill_n_past = 0;
     nc->session_tokens.clear();
+    nc->session_prefix_valid = false;
     nc->perf_prev_prompt_tokens.clear();
+    nc->cached_fmt_past_key.clear();
+    nc->cached_fmt_past.clear();
     LOGI("llamaClearKvCache: done (n_past reset to 0, session_tokens cleared)");
 }
 
@@ -1327,8 +1438,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
     const int perf_n_past_before = nc->n_past;
     nc->perf_prev_prompt_tokens = tokens;
 
-    // session と n_past の不整合は追跡不能 → フルクリア
-    if (!nc->session_tokens.empty() &&
+    // session と n_past の不整合は、信頼できる prefix 追跡時だけフルクリア。
+    // media 後は session_prefix_valid=false で部分トークンしか無いため、ここでは消さない。
+    if (nc->session_prefix_valid &&
+        !nc->session_tokens.empty() &&
         static_cast<int>(nc->session_tokens.size()) != nc->n_past)
     {
         LOGW("nativeComplete: session_tokens(%zu) != n_past(%d), clearing",
@@ -1336,42 +1449,93 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         llama_memory_clear(llama_get_memory(nc->ctx), true);
         nc->n_past = 0;
         nc->session_tokens.clear();
+        nc->session_prefix_valid = false;
     }
 
     size_t common = 0;
-    while (common < nc->session_tokens.size() && common < tokens.size() &&
-           nc->session_tokens[common] == tokens[common])
-        ++common;
+    if (nc->session_prefix_valid)
+    {
+        while (common < nc->session_tokens.size() && common < tokens.size() &&
+               nc->session_tokens[common] == tokens[common])
+            ++common;
+    }
 
     const char *cache_path = "full";
     int prefill_from = 0;
 
-    if (common == static_cast<size_t>(nc->n_past) && common <= tokens.size())
+    if (nc->session_prefix_valid &&
+        common == static_cast<size_t>(nc->n_past) && common <= tokens.size())
     {
         // Path A: 入力が session の接頭辞一致（フル prompt 再送時の差分）。hybrid OK
         cache_path = (common == tokens.size()) ? "exact" : "append";
         prefill_from = static_cast<int>(common);
     }
-    else if (common > 0 && common < static_cast<size_t>(nc->n_past))
+    else if (nc->session_prefix_valid &&
+             common > 0 && common < static_cast<size_t>(nc->n_past))
     {
-        // Path B: 途中まで一致。seq_rm で末尾を落とす（transformer のみ。hybrid は失敗し full へ）
+        // Path B: 途中まで一致。末尾削除を試す。
+        // hybrid/recurrent は範囲指定 seq_rm が失敗しやすいので p1=-1 も試す。
         llama_memory_t mem = llama_get_memory(nc->ctx);
         const llama_pos p0 = static_cast<llama_pos>(common);
         const llama_pos p1 = static_cast<llama_pos>(nc->n_past);
-        if (llama_memory_seq_rm(mem, 0, p0, p1))
+        bool removed = llama_memory_seq_rm(mem, 0, p0, p1);
+        if (!removed)
+        {
+            LOGW("nativeComplete: seq_rm[%d,%d) failed, retry seq_rm[%d,-1)",
+                 (int)p0, (int)p1, (int)p0);
+            removed = llama_memory_seq_rm(mem, 0, p0, -1);
+        }
+        if (removed)
         {
             nc->n_past = static_cast<int>(common);
             nc->session_tokens.resize(common);
             cache_path = "rewind";
             prefill_from = static_cast<int>(common);
         }
-        else
+        else if (nc->is_hybrid_memory &&
+                 common == static_cast<size_t>(nc->post_prefill_n_past) &&
+                 static_cast<int>(tokens.size()) > static_cast<int>(common))
         {
-            LOGW("nativeComplete: seq_rm failed (common=%zu n_past=%d), full clear",
+            // hybrid: 生成分の部分削除は失敗するのが正常 (llama.cpp #22534 / #20428)。
+            // フルプロンプト再送で「共通接頭辞 + 新規」の形なら、破壊的 wipe の代わりに
+            // キャッシュを捨てて全 prefill するしかないが、common が大きいほど痛い。
+            // ここでは append できないため full になるが、ログで hybrid 経路を明示する。
+            // 多ターンは Kotlin formatChatSingle + append_suffix を使うこと。
+            LOGW("nativeComplete: hybrid seq_rm failed (common=%zu n_past=%d) — full prefill "
+                 "(prefer formatChatSingle/append_suffix next turn)",
                  common, perf_n_past_before);
             llama_memory_clear(mem, true);
             nc->n_past = 0;
             nc->session_tokens.clear();
+            nc->session_prefix_valid = false;
+            cache_path = "full";
+            prefill_from = 0;
+            common = 0;
+        }
+        else if (nc->is_hybrid_memory && common > 0 &&
+                 static_cast<int>(tokens.size()) == static_cast<int>(common))
+        {
+            // 生成だけ落として exact にしたいが hybrid では不可。
+            // PR #22534 にならい、共通接頭辞の wipe は避ける: 生成残りを無視できず
+            // logits 位置がずれるため、ここも full clear が安全。
+            LOGW("nativeComplete: hybrid cannot trim gen (common=%zu n_past=%d), full clear",
+                 common, perf_n_past_before);
+            llama_memory_clear(mem, true);
+            nc->n_past = 0;
+            nc->session_tokens.clear();
+            nc->session_prefix_valid = false;
+            cache_path = "full";
+            prefill_from = 0;
+            common = 0;
+        }
+        else
+        {
+            LOGW("nativeComplete: seq_rm failed (common=%zu n_past=%d n_tokens=%d), full clear",
+                 common, perf_n_past_before, n_tokens);
+            llama_memory_clear(mem, true);
+            nc->n_past = 0;
+            nc->session_tokens.clear();
+            nc->session_prefix_valid = false;
             cache_path = "full";
             prefill_from = 0;
             common = 0;
@@ -1379,11 +1543,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
     }
     else if (common == 0 && nc->n_past > 0 && n_tokens > 0 && n_tokens < nc->n_past)
     {
-        // formatChatSingle の差分だけが渡されたケース。
-        // 入力は session の接頭辞ではないが、末尾に追記する（hybrid の本命）。
+        // formatChatSingle の差分 / media 後の追記（hybrid の本命）
         cache_path = "append_suffix";
-        prefill_from = 0; // 入力トークンは全部 eval。n_past は維持したまま下で加算
-        // session_tokens は下のループ後に追記で伸ばす
+        prefill_from = 0;
     }
     else if (common == 0 && nc->n_past > 0)
     {
@@ -1391,6 +1553,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         llama_memory_clear(llama_get_memory(nc->ctx), true);
         nc->n_past = 0;
         nc->session_tokens.clear();
+        nc->session_prefix_valid = false;
         cache_path = "full";
         prefill_from = 0;
     }
@@ -1424,10 +1587,16 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
     // n_batch ずつ分割してデコード（差分のみ）
     // append_suffix: prefill_from=0 でも n_past は維持し、入力トークンを末尾に積む
     const int n_past_at_prefill_start = nc->n_past;
-    for (int i = prefill_from; i < n_tokens; i += nc->n_batch)
+    const int n_prefill_tokens = n_tokens - prefill_from;
+    bool prefill_interrupted = false;
+    int batch_idx = 0;
+    for (int i = prefill_from; i < n_tokens; i += nc->n_batch, ++batch_idx)
     {
         if (nc->interrupted.load(std::memory_order_acquire))
+        {
+            prefill_interrupted = true;
             break;
+        }
         const int chunk = std::min(nc->n_batch, n_tokens - i);
         nc->batch.clear();
         for (int j = 0; j < chunk; ++j)
@@ -1441,23 +1610,40 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
             return utf8_to_jstring(env, "");
         }
         nc->n_past += chunk;
+        // 長文 prefill のみ UI スレッドに CPU を譲る。
+        // usleep は TTFT を悪化させるため使わない（on-device prefill スループット優先）。
+        if (n_prefill_tokens > nc->n_batch)
+            std::this_thread::yield();
     }
+    if (prefill_interrupted)
+    {
+        LOGI("nativeComplete: prefill interrupted, rewind to %d", n_past_at_prefill_start);
+        rewind_kv_to(nc, n_past_at_prefill_start);
+        nc->post_prefill_n_past = nc->n_past;
+        return utf8_to_jstring(env, "");
+    }
+    nc->post_prefill_n_past = nc->n_past;
     // session_tokens 更新
     if (std::string(cache_path) == "append_suffix")
     {
-        nc->session_tokens.resize(n_past_at_prefill_start);
-        const int added = nc->n_past - n_past_at_prefill_start;
-        for (int i = 0; i < added && (prefill_from + i) < n_tokens; ++i)
-            nc->session_tokens.push_back(tokens[prefill_from + i]);
+        if (nc->session_prefix_valid)
+        {
+            nc->session_tokens.resize(n_past_at_prefill_start);
+            const int added = nc->n_past - n_past_at_prefill_start;
+            for (int i = 0; i < added && (prefill_from + i) < n_tokens; ++i)
+                nc->session_tokens.push_back(tokens[prefill_from + i]);
+        }
     }
     else if (nc->n_past <= n_tokens)
     {
         // full / append / rewind: session は今回の prompt 先頭から
         nc->session_tokens.assign(tokens.begin(), tokens.begin() + nc->n_past);
+        nc->session_prefix_valid = true;
     }
     else
     {
         nc->session_tokens.clear();
+        nc->session_prefix_valid = false;
     }
 
     const auto perf_prefill_done = std::chrono::steady_clock::now();
@@ -1498,8 +1684,11 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         return Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
             env, nullptr, j_ctx, j_prompt, n_predict, temperature, top_p, top_k, repeat_penalty, j_stop_words);
     }
-    // メディア経路はチャンク単位で位置が変わるため session 追跡は破棄（次回 text は full）
+    // メディアはテキスト session_tokens と 1:1 にならないため prefix 追跡を無効化。
+    // session_tokens を中途半端に残すと「size != n_past」で次ターンがフルクリアされる。
+    // n_past は維持し、同一セッションへの画像追記 prefill を可能にする。
     nc->session_tokens.clear();
+    nc->session_prefix_valid = false;
 
     nc->interrupted.store(false, std::memory_order_release);
 
@@ -1617,6 +1806,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         LOGW("nativeCompleteWithMedia: prompt+media too large, clearing KV cache");
         llama_memory_clear(llama_get_memory(nc->ctx), true);
         nc->n_past = 0;
+        nc->session_tokens.clear();
+        nc->session_prefix_valid = false;
     }
 
     // mtmd-cli eval_message と同じ評価。テキストは mtmd_helper_eval_chunk_single、
@@ -1681,8 +1872,13 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         return env->NewStringUTF("");
     }
     nc->n_past = new_n_past;
+    nc->post_prefill_n_past = nc->n_past;
+    // 生成トークンを session に積まない（prefix 無効のまま）。次の text は append_suffix 可能。
+    // 同一画像の再送は上位で避ける。KV 上の vision token は n_past に残し、次ターンは差分追記。
+    nc->session_tokens.clear();
+    nc->session_prefix_valid = false;
     NEZUMI_DIAG("DIAG|pos|eval_done|n_past=%d", nc->n_past);
-    LOGI("nativeCompleteWithMedia: eval done n_past=%d (delta from start logged per chunk)", nc->n_past);
+    LOGI("nativeCompleteWithMedia: eval done n_past=%d (session prefix invalid, append_suffix ok)", nc->n_past);
 
     std::string result = generate_loop(env, nc, n_predict, temperature, top_p, top_k,
                                        repeat_penalty, stop_words);
@@ -1802,14 +1998,13 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
 
     try
     {
-        // 明示テンプレートで一時的なテンプレートセットを構築
-        common_chat_templates_ptr tmpls = common_chat_templates_init(nc->model, chat_template);
+        common_chat_templates *tmpls = get_or_init_explicit_templates(nc, chat_template);
         if (!tmpls)
         {
             LOGE("nativeApplyJinjaChatTemplate: failed to init template");
             return env->NewStringUTF("");
         }
-        common_chat_params params = common_chat_templates_apply(tmpls.get(), inputs);
+        common_chat_params params = common_chat_templates_apply(tmpls, inputs);
         // 明示テンプレートでも同様にキャッシュし、対応パーサーで分離できるようにする
         nc->chat_params = params;
         nc->chat_params_valid = true;
@@ -1871,42 +2066,51 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeFormatChatSingle(
 
     try
     {
-        // フル経路 (nativeApplyGgufChatTemplate) と同じ apply で差分を取る。
-        // common_chat_format_single は enable_thinking を渡せないため、
-        // thinking OFF 時に Qwen が Thinking Process を出し始める不整合が起きる。
-        common_chat_templates *tmpls_raw = nullptr;
-        common_chat_templates_ptr tmpls_owned;
-        if (chat_template.empty() && nc->chat_templates)
-        {
-            tmpls_raw = nc->chat_templates;
-        }
-        else
-        {
-            tmpls_owned = common_chat_templates_init(nc->model, chat_template);
-            tmpls_raw = tmpls_owned.get();
-        }
+        // フル経路と同じ apply で差分を取る（enable_thinking 対応のため format_single は使わない）。
+        // 明示テンプレはキャッシュ。past 側 apply もキー一致なら再利用して二重コストを削る。
+        common_chat_templates *tmpls_raw = get_or_init_explicit_templates(nc, chat_template);
         if (!tmpls_raw)
         {
             LOGE("nativeFormatChatSingle: templates_init failed");
             return env->NewStringUTF("");
         }
 
-        common_chat_templates_inputs inputs_past;
-        inputs_past.messages = past;
-        inputs_past.add_generation_prompt = false;
-        inputs_past.use_jinja = use_jinja != JNI_FALSE;
-        inputs_past.enable_thinking = enable_thinking != JNI_FALSE;
-        inputs_past.now = std::chrono::system_clock::now();
-        common_chat_params params_past = common_chat_templates_apply(tmpls_raw, inputs_past);
-        const std::string fmt_past = params_past.prompt.str();
+        const bool use_jinja_b = use_jinja != JNI_FALSE;
+        const bool enable_thinking_b = enable_thinking != JNI_FALSE;
+        std::string past_key = past_json;
+        past_key.push_back('|');
+        past_key.push_back(use_jinja_b ? '1' : '0');
+        past_key.push_back('|');
+        past_key.push_back(enable_thinking_b ? '1' : '0');
+        past_key.push_back('|');
+        past_key.append(chat_template);
+
+        std::string fmt_past;
+        if (nc->cached_fmt_past_key == past_key && !nc->cached_fmt_past.empty())
+        {
+            fmt_past = nc->cached_fmt_past;
+        }
+        else
+        {
+            common_chat_templates_inputs inputs_past;
+            inputs_past.messages = past;
+            inputs_past.add_generation_prompt = false;
+            inputs_past.use_jinja = use_jinja_b;
+            inputs_past.enable_thinking = enable_thinking_b;
+            inputs_past.now = std::chrono::system_clock::now();
+            common_chat_params params_past = common_chat_templates_apply(tmpls_raw, inputs_past);
+            fmt_past = params_past.prompt.str();
+            nc->cached_fmt_past_key = past_key;
+            nc->cached_fmt_past = fmt_past;
+        }
 
         std::vector<common_chat_msg> all = past;
         all.push_back(neu);
         common_chat_templates_inputs inputs_all;
         inputs_all.messages = all;
         inputs_all.add_generation_prompt = add_generation_prompt != JNI_FALSE;
-        inputs_all.use_jinja = use_jinja != JNI_FALSE;
-        inputs_all.enable_thinking = enable_thinking != JNI_FALSE;
+        inputs_all.use_jinja = use_jinja_b;
+        inputs_all.enable_thinking = enable_thinking_b;
         inputs_all.now = std::chrono::system_clock::now();
         common_chat_params params_all = common_chat_templates_apply(tmpls_raw, inputs_all);
         const std::string fmt_all = params_all.prompt.str();

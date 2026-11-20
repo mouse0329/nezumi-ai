@@ -257,7 +257,7 @@ if(EXISTS ${LLAMA_CPP_UPSTREAM_DIR}/CMakeLists.txt)
 
     # --- クロスコンパイル必須設定 ---
     set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
-    set(GGML_CPU_ARM_ARCH "armv8.7a" CACHE STRING "" FORCE)
+    set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+fp16+i8mm" CACHE STRING "" FORCE)
     set(GGML_OPENMP OFF CACHE BOOL "" FORCE)      # NDK に OpenMP パッケージが無い
     set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)   # Android 未対応
     set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)    # NDK stable API に無い
@@ -300,7 +300,7 @@ if(EXISTS ${LLAMA_CPP_UPSTREAM_DIR}/CMakeLists.txt)
             # Android ABI 固有の最適化
             if(ANDROID_ABI STREQUAL "arm64-v8a")
                 target_compile_options(${LLAMA_HOT_TARGET} PRIVATE
-                    -march=armv8.7a
+                    -march=armv8.2-a+dotprod+fp16+i8mm
                 )
             endif()
         endif()

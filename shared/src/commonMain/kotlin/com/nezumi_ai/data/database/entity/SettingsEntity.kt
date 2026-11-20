@@ -14,7 +14,7 @@ data class SettingsEntity(
     val selectedModel: String = "E2B", // E2B or E4B
     val backendType: String = "CPU", // GPU or CPU
     val autoFallback: Boolean = true,
-    val contextWindow: Int = 4096, // Legacy: Use contextWindowMap instead
+    val contextWindow: Int = 2048, // Legacy: Use contextWindowMap instead
     val contextWindowMap: String = "", // E2B=4096;E4B=4096;IMPORTED=4096
     val preloadMemoryWarningThresholdPercent: Int = 60,
     val temperature: Float = 0.7f,
@@ -34,9 +34,9 @@ data class SettingsEntity(
     val llamaCppThreads: Int = (availableProcessorCount() * 0.7f)
         .roundToInt()
         .coerceAtLeast(1),
-    val llamaCppGpuLayers: Int = 0,
+    val llamaCppGpuLayers: Int = 99, 
     val llamaCppGpuBackend: String = "CPU",
-    val llamaCppBatchSize: Int = 1024,
+    val llamaCppBatchSize: Int = 512, 
     val llamaCppUBatchSize: Int = 512,
     val llamaCppKvUnified: Boolean = true,
     val llamaCppNKeep: Int = 0,
@@ -54,7 +54,7 @@ data class SettingsEntity(
     // Performance optimization settings
     val mtpEnabled: Boolean = false, // Multi-Token Prediction (投機的デコーディング)
     val mtpDraftTokens: Int = 5, // MTP draft token count (1-16)
-    val flashAttentionEnabled: Boolean = true, // Flash Attention (自動検出)
+    val flashAttentionEnabled: Boolean = false, // Android 既定は off
     val dynamicBatchSizeEnabled: Boolean = true, // 動的バッチサイズ調整
     val promptBatchSize: Int = 512, // プロンプト処理用バッチサイズ
     val generationBatchSize: Int = 128, // トークン生成用バッチサイズ

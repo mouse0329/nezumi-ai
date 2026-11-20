@@ -4,7 +4,7 @@ import com.nezumi_ai.data.database.availableProcessorCount
 import kotlin.math.roundToInt
 
 data class InferenceConfig(
-    val contextWindow: Int = 4096,
+    val contextWindow: Int = 2048,
     val temperature: Float = 0.7f,
     val maxTopK: Int = 40,
     val maxTokens: Int = 1024,
@@ -20,9 +20,9 @@ data class InferenceConfig(
     val requireMultimodal: Boolean = false,
     // llama.cpp settings (最適化版 - Gallery 相準化)
     val llamaCppThreads: Int = getDefaultThreadCount(),
-    val llamaCppGpuLayers: Int = 0,
+    val llamaCppGpuLayers: Int = 99,
     val llamaCppGpuBackend: String = LlamaCppGpuBackend.CPU,
- val llamaCppBatchSize: Int = 1024,
+ val llamaCppBatchSize: Int = 512, 
     val llamaCppUBatchSize: Int = 512,  // n_ubatch を独立制御できるように準備
     val llamaCppKvUnified: Boolean = true,  // KV 統合をデフォルトで有効化
     val llamaCppNKeep: Int = 0,  // KV キャッシュ無効化
@@ -43,7 +43,7 @@ data class InferenceConfig(
     // Performance optimization settings
     val mtpEnabled: Boolean = false,  // Multi-Token Prediction (投機的デコーディング)
     val mtpDraftTokens: Int = 5,  // MTP draft token count (1-16)
-    val flashAttentionEnabled: Boolean = true,  // Flash Attention (自動検出)
+    val flashAttentionEnabled: Boolean = false,  //  Android 既定は off
     val dynamicBatchSizeEnabled: Boolean = true,  // 動的バッチサイズ調整
     val promptBatchSize: Int = 512,  // プロンプト処理用バッチサイズ
     val generationBatchSize: Int = 128,  // トークン生成用バッチサイズ
@@ -52,9 +52,9 @@ data class InferenceConfig(
 ) {
     data class GgufConfig(
         val nThreads: Int = 4,
-        val nBatch: Int = 1024,
+        val nBatch: Int = 512,
         val nUBatch: Int = 512,
-        val nGpuLayers: Int = 0,
+        val nGpuLayers: Int = 99,
         val kvUnified: Boolean = true,
         val ropeFreqBase: Float = 0.0f,
         val ropeFreqScale: Float = 1.0f
@@ -107,8 +107,9 @@ data class InferenceConfig(
         const val DEFAULT_MAX_TOOL_ROUNDS = 5
 
         fun getDefaultThreadCount(): Int {
+            //  既定は 4。コア数が少ない端末では上限を超えない。
             val availableCores = availableProcessorCount().coerceAtLeast(MIN_THREADS)
-            return (availableCores * 0.7f).roundToInt().coerceIn(MIN_THREADS, availableCores)
+            return 4.coerceIn(MIN_THREADS, availableCores)
         }
 
         fun getMaxThreadCount(): Int {

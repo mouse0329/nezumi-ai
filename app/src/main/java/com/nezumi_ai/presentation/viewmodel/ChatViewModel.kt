@@ -1902,18 +1902,8 @@ class ChatViewModel(
             } else {
                 manager.cancelInference()
             }
- // Bug fix: ユーザー停止 / 取り消し後は DB 上の履歴とネイティブ KV キャッシュが
-            //   乖離しやすい。特に Qwen の `/think` `/no_think` 切替後に途中停止すると、
-            //   次の送信でキャッシュ側に残った中途半端な assistant ターンが再利用され、
-            //   「こんにちは」に対して `2.0.0 ...` のような壊れた出力を返すことがあった。
-            //   停止時点で KV を明示的にクリアして、次回は DB 履歴から組み直す。
-            manager.clearKvCache()
- // GGUF では cancelInference() だけではネイティブ KV に途中トークンが
-            //   残るケースがあるため、次回推論開始前の force-clear もリクエストしておく。
-            //   manager 側は GGUF / LiteRT を含めてエンジンチェーンを踏んだ
-            //   ため、未対応エンジンではこの呼び出しは no-op として育てる。
-            runCatching { manager.requestForceClearBeforeNextInference() }
-                .onFailure { Log.w(TAG, "requestForceClearBeforeNextInference (stopGenerationInternal) failed", it) }
+ // キャンセル時はネイティブ側が post_prefill まで KV を巻き戻す。
+            // フル clear すると次回が全文 prefill になりフレーム低下と体感ロードが増える。
         } catch (e: Exception) {
             Log.e(TAG, "Failed to cancel inference", e)
         }
